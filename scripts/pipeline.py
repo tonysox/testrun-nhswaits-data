@@ -36,7 +36,10 @@ DIFF_DIR = os.path.join(REPO_ROOT, "data", "diffs")
 NORM_CSV = os.path.join(NORM_DIR, "rtt_trust_specialty.csv")
 SUMMARY_JSON = os.path.join(NORM_DIR, "summary.json")
 UA = "testrun-nhswaits-data pipeline (playbook validation; contact: github.com/tonysox)"
-DRILL = os.environ.get("DRILL", "").lower() == "true"
+# DRILL modes: "" (off) | "full" (rename column + truncate -> fingerprint gate)
+#              | "truncate" (truncate only -> row-count gate)
+DRILL_MODE = os.environ.get("DRILL", "").lower().replace("true", "full")
+DRILL = DRILL_MODE in ("full", "truncate")
 
 MONTHS = {m: i + 1 for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
@@ -217,16 +220,19 @@ def median_from_bands(band_counts):
 
 # ---------------------------------------------------------------- process
 def corrupt_for_drill(csv_path):
-    """Deliberately broken file: renamed column + truncated rows (drill spec)."""
-    log("DRILL MODE: corrupting extracted CSV (rename 'Provider Org Code' column, truncate rows)")
+    """Deliberately broken file: renamed column + truncated rows (drill spec).
+    mode 'truncate' keeps the header intact so the row-count gate (not the
+    fingerprint gate) is the one that must block publication."""
+    log(f"DRILL MODE ({DRILL_MODE}): corrupting extracted CSV")
     tmp = csv_path + ".corrupt"
     with open(csv_path, newline="", encoding="utf-8-sig") as fin, \
             open(tmp, "w", newline="") as fout:
         r = csv.reader(fin)
         w = csv.writer(fout)
         header = next(r)
-        header = ["Prov Code (renamed by drill)" if h == "Provider Org Code" else h
-                  for h in header]
+        if DRILL_MODE == "full":
+            header = ["Prov Code (renamed by drill)" if h == "Provider Org Code" else h
+                      for h in header]
         w.writerow(header)
         for i, row in enumerate(r):
             if i >= 5000:  # truncate: a tiny fraction of the ~178k rows

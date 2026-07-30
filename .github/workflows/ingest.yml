@@ -9,9 +9,10 @@ on:
   workflow_dispatch:
     inputs:
       drill:
-        description: "Corrupted-file drill: feed a broken file through the gates (must fail, must not publish)"
-        type: boolean
-        default: false
+        description: "Corrupted-file drill (must fail, must not publish): full = renamed column + truncated rows (fingerprint gate); truncate = rows only (row-count gate)"
+        type: choice
+        options: [none, full, truncate]
+        default: none
 
 permissions:
   contents: write
@@ -24,7 +25,7 @@ jobs:
   ingest:
     runs-on: ubuntu-latest
     env:
-      DRILL: ${{ inputs.drill == true && 'true' || 'false' }}
+      DRILL: ${{ (inputs.drill != '' && inputs.drill != 'none') && inputs.drill || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +48,7 @@ jobs:
             TAG="${TAG}-r${GITHUB_RUN_ID}"
           fi
           PRE=""
-          if [ "$DRILL" = "true" ]; then PRE="--prerelease"; fi
+          if [ -n "$DRILL" ]; then PRE="--prerelease"; fi
           gh release create "$TAG" work/raw.zip work/sidecar.json \
             --repo "$GITHUB_REPOSITORY" $PRE \
             --title "Raw snapshot $TAG" \
