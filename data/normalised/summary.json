@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-07-30T22:45:51.119488+00:00",
+  "months_present": [
+    "2026-05"
+  ],
+  "latest_month": "2026-05",
+  "trusts": 532,
+  "specialties": 24,
+  "rows": 4126,
+  "waiting_list_total_latest_month": 7184233,
+  "raw_release_tag": "raw-2026-07-30",
+  "source_url": "https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/07/Full-CSV-data-file-May26-ZIP-3M-3jBgba.zip",
+  "raw_sha256": "b99c134c078f3d0e88238b32778ee0c24f96887387e30321ccf5ea78c3fa46eb"
+}
