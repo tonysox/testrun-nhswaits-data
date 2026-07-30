@@ -1,0 +1,93 @@
+name: ingest
+
+on:
+  schedule:
+    # 2x/day at odd minutes around the NHS publication window (standard: GitHub
+    # cron runs 20-40 min late at peak; odd minute avoids the on-the-hour crush).
+    - cron: "23 7 * * *"
+    - cron: "41 15 * * *"
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: "Corrupted-file drill: feed a broken file through the gates (must fail, must not publish)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    env:
+      DRILL: ${{ inputs.drill == true && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install csv-diff
+        run: pip install --quiet csv-diff
+
+      - name: Fetch + checksum dedupe
+        id: fetch
+        run: python3 scripts/pipeline.py fetch
+
+      - name: Archive raw (GitHub Release asset — R2 deviation D-002)
+        if: steps.fetch.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.fetch.outputs.tag }}
+        run: |
+          # Raw layer is archived BEFORE parse (standard: fetch -> archive raw
+          # ALWAYS -> parse -> gates -> publish). Never overwrite an existing tag.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            TAG="${TAG}-r${GITHUB_RUN_ID}"
+          fi
+          PRE=""
+          if [ "$DRILL" = "true" ]; then PRE="--prerelease"; fi
+          gh release create "$TAG" work/raw.zip work/sidecar.json \
+            --repo "$GITHUB_REPOSITORY" $PRE \
+            --title "Raw snapshot $TAG" \
+            --notes "Untouched source bytes + sidecar (fetched_at, source_url, sha256, HTTP headers). Immutable raw layer."
+
+      - name: Parse + schema fingerprint + quality gates + stage publish
+        if: steps.fetch.outputs.changed == 'true'
+        id: process
+        run: python3 scripts/pipeline.py process
+
+      - name: Diff vs previous normalised version (alert-feed proof)
+        if: steps.fetch.outputs.changed == 'true'
+        run: |
+          STAMP="$(date -u +%Y%m%d-%H%M%S)"
+          mkdir -p data/diffs
+          PREV="$(git show HEAD:data/normalised/rtt_trust_specialty.csv 2>/dev/null > /tmp/prev.csv && echo yes || echo no)"
+          if [ "$PREV" = "yes" ] && [ -s /tmp/prev.csv ]; then
+            csv-diff /tmp/prev.csv data/normalised/rtt_trust_specialty.csv \
+              --key=row_key > "data/diffs/${STAMP}.txt" || true
+            echo "--- csv-diff (first 40 lines) ---"
+            head -40 "data/diffs/${STAMP}.txt"
+          else
+            echo "first publish - no previous version to diff" > "data/diffs/${STAMP}.txt"
+          fi
+
+      - name: Commit + push normalised layer
+        if: steps.fetch.outputs.changed == 'true'
+        run: |
+          git config user.name "nhswaits-pipeline"
+          git config user.email "actions@users.noreply.github.com"
+          git add data state
+          git commit -m "ingest: ${{ steps.process.outputs.month }} (raw ${{ steps.fetch.outputs.tag }})"
+          git push
+
+      - name: Heartbeat (PLACEHOLDER — Healthchecks.io not provisioned, batch #0 gap)
+        if: success()
+        run: |
+          # DEVIATION (testrun): no Healthchecks.io account exists yet (owner batch
+          # #0 item). In production this step is, per STANDARD-data-pipeline §6:
+          #   curl -fsS --retry 3 "https://hc-ping.com/$HEALTHCHECKS_UUID"
+          # pinged ONLY on success (never on run start) so that absence catches
+          # crashes, hangs, the 60-day disable, dropped crons AND gate blocks.
+          echo "HEARTBEAT-PLACEHOLDER: would ping hc-ping.com/<uuid> here (success only)"

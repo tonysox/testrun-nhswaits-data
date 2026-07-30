@@ -1,0 +1,32 @@
+# testrun-nhswaits-data
+
+**Test-run scraper — playbook validation exercise, not a product.** Safe to delete.
+
+Working title for the case under test: **Turnbeck** (simulated pick; no domain bought).
+
+Git-scraping pipeline for NHS England RTT (referral-to-treatment) waiting times,
+built to `STANDARD-data-pipeline.md`:
+
+- `.github/workflows/ingest.yml` — scheduled 2x/day (odd minutes) + manual dispatch;
+  `drill: true` input runs the corrupted-file drill (renamed column + truncated rows
+  must be blocked by the gates and must not touch last-good data).
+- `scripts/pipeline.py` — discover latest Full-CSV extract from the RTT landing page
+  (per-FY URLs, unstable filenames — never hardcode), fetch, checksum-dedupe,
+  archive raw, parse, schema-fingerprint, quality gates, publish.
+- **Raw layer** — untouched source ZIP + sidecar JSON as GitHub **Release assets**
+  (`raw-<date>` tags). *Deviation:* the standard says Cloudflare R2; the available
+  token lacks R2 scope (testrun D-002), so Releases stand in. Never overwritten;
+  deduped by sha256.
+- **Normalised layer** — `data/normalised/rtt_trust_specialty.csv`
+  (row_key, month, provider code/name, specialty code/name, waiting-list size,
+  estimated median wait in weeks, % within 18 weeks — Incomplete Pathways only),
+  plus `data/normalised/summary.json` for the site build.
+- **Diff layer** — `data/diffs/<stamp>.txt` csv-diff between consecutive versions
+  (the alert-feed input).
+- **Gates** (fail loudly BEFORE publish; last-good stays untouched):
+  schema fingerprint (ordered column+dtype hash) · row-count delta ±20% vs trailing
+  average · null-rate ceilings on key columns · staleness (>150 days) · sanity.
+- **Heartbeat** — placeholder step; production pings Healthchecks.io on success only.
+
+Source: NHS England RTT statistical work area (full CSV data file, monthly,
+revised ~every 6 months — hence every raw vintage is kept).
