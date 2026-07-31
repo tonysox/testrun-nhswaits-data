@@ -15,7 +15,24 @@ Subcommands:
 Env:
   DRILL=true   corrupted-file drill: force-changed, corrupt the extracted CSV
                (rename a column + truncate rows) before parse; gates must block.
+  BACKFILL_MONTH=YYYY-MM
+               supervised backfill mode (ADR-04): fetch THAT month's historical
+               full extract from its financial-year landing page (preferring the
+               highest '-revised[-N]' variant = final revision as published at
+               download time), raw-archive under raw-backfill-YYYY-MM, run all
+               gates (baselines arm from the first backfill month, D-028;
+               row-count compares within the backfill sequence; staleness N/A
+               for historical vintages) and append to the accumulated layer.
+               Gate failure = the month is skipped and logged by the driver
+               (scripts/backfill.sh), never force-parsed.
   WORK_DIR     scratch dir (default ./work)
+
+History-accumulation contract (ADR-04, pinned in pipeline/SOURCES/nhs-rtt.md):
+the normalised CSV retains EVERY month ever ingested, one row per
+row_key = month|provider|specialty; latest vintage wins per row_key (a re-ingest
+of a month replaces that month's rows only); revisions are evidenced in
+data/diffs/. On each publish, data/deltas/latest.json carries the per-entity
+month-on-month deltas (alerts_thresholds.py, ADR-02) for the W4 send job.
 """
 import csv
 import hashlib
@@ -28,6 +45,9 @@ import urllib.request
 import zipfile
 from datetime import date, datetime, timezone
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from alerts_thresholds import compute_deltas  # noqa: E402  (ADR-02 module)
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORK = os.environ.get("WORK_DIR", os.path.join(REPO_ROOT, "work"))
 STATE = os.path.join(REPO_ROOT, "state")
@@ -35,11 +55,20 @@ NORM_DIR = os.path.join(REPO_ROOT, "data", "normalised")
 DIFF_DIR = os.path.join(REPO_ROOT, "data", "diffs")
 NORM_CSV = os.path.join(NORM_DIR, "rtt_trust_specialty.csv")
 SUMMARY_JSON = os.path.join(NORM_DIR, "summary.json")
+DELTAS_DIR = os.path.join(REPO_ROOT, "data", "deltas")
+DELTAS_JSON = os.path.join(DELTAS_DIR, "latest.json")
 UA = "testrun-nhswaits-data pipeline (playbook validation; contact: github.com/tonysox)"
 # DRILL modes: "" (off) | "full" (rename column + truncate -> fingerprint gate)
 #              | "truncate" (truncate only -> row-count gate)
 DRILL_MODE = os.environ.get("DRILL", "").lower().replace("true", "full")
 DRILL = DRILL_MODE in ("full", "truncate")
+BACKFILL = os.environ.get("BACKFILL_MONTH", "").strip()
+if BACKFILL and not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", BACKFILL):
+    print(f"::error::invalid BACKFILL_MONTH {BACKFILL!r} (want YYYY-MM)")
+    sys.exit(2)
+if BACKFILL and DRILL:
+    print("::error::BACKFILL_MONTH and DRILL are mutually exclusive")
+    sys.exit(2)
 
 MONTHS = {m: i + 1 for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
@@ -74,47 +103,84 @@ def http_get(url):
 
 
 # ---------------------------------------------------------------- discovery
+LINK_RE = re.compile(
+    r'href="(https://www\.england\.nhs\.uk/statistics/wp-content/[^"]*'
+    r'Full-CSV-data-file-([A-Z][a-z]{2})(\d{2})[^"]*\.zip)"')
+
+
+def fy_page(fy_start_year):
+    return ("https://www.england.nhs.uk/statistics/statistical-work-areas/"
+            f"rtt-waiting-times/rtt-data-{fy_start_year}-{(fy_start_year + 1) % 100:02d}/")
+
+
 def landing_pages():
     """Per-financial-year URLs (new URL every April) — follow the landing page,
     never hardcode file URLs (standard §4)."""
     today = date.today()
     fy_start = today.year if today.month >= 4 else today.year - 1
-    pages = []
-    for y in (fy_start, fy_start - 1):
-        pages.append("https://www.england.nhs.uk/statistics/statistical-work-areas/"
-                     f"rtt-waiting-times/rtt-data-{y}-{(y + 1) % 100:02d}/")
-    return pages
+    return [fy_page(fy_start), fy_page(fy_start - 1)]
+
+
+def scrape_extract_links(page):
+    html = http_get(page).read().decode("utf-8", "replace")
+    return [(2000 + int(yy), MONTHS[mon], url)
+            for url, mon, yy in LINK_RE.findall(html) if mon in MONTHS]
+
+
+def revision_rank(url):
+    """NHS republishes revised vintages as ...-revised.zip / ...-revised-2.zip.
+    Higher = later revision; an unrevised file ranks 0."""
+    m = re.search(r"-revised(?:-(\d+))?", url)
+    if not m:
+        return 0
+    return int(m.group(1)) if m.group(1) else 1
 
 
 def discover_latest():
-    link_re = re.compile(
-        r'href="(https://www\.england\.nhs\.uk/statistics/wp-content/[^"]*'
-        r'Full-CSV-data-file-([A-Z][a-z]{2})(\d{2})[^"]*\.zip)"')
     found = []
     for page in landing_pages():
         try:
-            html = http_get(page).read().decode("utf-8", "replace")
+            found = scrape_extract_links(page)
         except Exception as e:  # noqa: BLE001
             log(f"landing page {page} not reachable ({e}) — trying previous FY")
             continue
-        for url, mon, yy in link_re.findall(html):
-            if mon in MONTHS:
-                found.append((2000 + int(yy), MONTHS[mon], url))
         if found:
             break
     if not found:
         fail("discovery: no Full-CSV-data-file link found on any RTT landing page "
              "(source-change contingency: check URL pattern / page layout)")
-    found.sort()
+    found.sort(key=lambda t: (t[0], t[1], revision_rank(t[2])))
     y, m, url = found[-1]
     log(f"discovered latest extract: {y}-{m:02d} -> {url}")
+    return url
+
+
+def discover_month(month):
+    """Backfill discovery: the requested month's extract from ITS financial-year
+    landing page, preferring the highest revision (= final as-published-at-
+    download; NHS revises past months ~6-monthly)."""
+    y, m = int(month[:4]), int(month[5:7])
+    fy = y if m >= 4 else y - 1
+    page = fy_page(fy)
+    try:
+        links = scrape_extract_links(page)
+    except Exception as e:  # noqa: BLE001
+        fail(f"backfill discovery: FY landing page {page} not reachable ({e})")
+    candidates = [url for (ly, lm, url) in links if (ly, lm) == (y, m)]
+    if not candidates:
+        fail(f"backfill discovery: no Full-CSV-data-file link for {month} on {page} "
+             "(month may predate the extract format or the page layout changed)")
+    candidates.sort(key=revision_rank)
+    url = candidates[-1]
+    log(f"backfill {month}: {len(candidates)} candidate(s), picked revision rank "
+        f"{revision_rank(url)} -> {url}")
     return url
 
 
 # ---------------------------------------------------------------- fetch
 def cmd_fetch():
     os.makedirs(WORK, exist_ok=True)
-    url = discover_latest()
+    url = discover_month(BACKFILL) if BACKFILL else discover_latest()
     resp = http_get(url)
     blob = resp.read()
     headers = {k: v for k, v in resp.headers.items()
@@ -142,11 +208,21 @@ def cmd_fetch():
         "http_headers": headers,
         "drill": DRILL,
     }
+    if BACKFILL:
+        sidecar["backfill_month"] = BACKFILL
+        sidecar["vintage_note"] = ("historical vintage as published at download "
+                                   "time (NHS's final revision to date, not the "
+                                   "original first publication)")
     with open(os.path.join(WORK, "sidecar.json"), "w") as f:
         json.dump(sidecar, f, indent=2)
 
     stamp = date.today().isoformat()
-    tag = f"drill-raw-{os.environ.get('GITHUB_RUN_ID', 'local')}" if DRILL else f"raw-{stamp}"
+    if DRILL:
+        tag = f"drill-raw-{os.environ.get('GITHUB_RUN_ID', 'local')}"
+    elif BACKFILL:
+        tag = f"raw-backfill-{BACKFILL}"
+    else:
+        tag = f"raw-{stamp}"
     with open(os.path.join(WORK, "meta.json"), "w") as f:
         json.dump({"sha256": sha, "tag": tag, "source_url": url}, f)
     gh_output("changed", "true")
@@ -264,7 +340,12 @@ def cmd_process():
             if len(sample) >= 200:
                 break
     fp, cols = schema_fingerprint(header, sample)
-    fp_path = os.path.join(STATE, "schema_fingerprint.txt")
+    # Backfill fingerprints live in their own baseline namespace: the baseline
+    # arms from the FIRST backfill month (bootstrap rule D-028) and the gate
+    # compares within the backfill sequence, leaving the live pipeline's
+    # baseline untouched.
+    fp_name = "backfill_fingerprint.txt" if BACKFILL else "schema_fingerprint.txt"
+    fp_path = os.path.join(STATE, fp_name)
     if os.path.exists(fp_path):
         stored = open(fp_path).read().strip().split()[0]
         if fp != stored:
@@ -272,10 +353,17 @@ def cmd_process():
             fail("SCHEMA FINGERPRINT MISMATCH — refusing to parse/publish. "
                  f"stored={stored[:12]} got={fp[:12]}; key columns missing: {missing or 'none'}. "
                  "Inspect the raw release asset, update the parser deliberately, "
-                 "then refresh state/schema_fingerprint.txt.")
+                 f"then refresh state/{fp_name}.")
         log(f"schema fingerprint OK ({fp[:12]})")
     else:
-        log(f"first run: recording schema fingerprint {fp[:12]}")
+        log(f"first {'backfill ' if BACKFILL else ''}run: recording schema "
+            f"fingerprint {fp[:12]} in state/{fp_name}")
+    if BACKFILL:
+        live_fp_path = os.path.join(STATE, "schema_fingerprint.txt")
+        if os.path.exists(live_fp_path):
+            live_fp = open(live_fp_path).read().strip().split()[0]
+            log(f"backfill fingerprint vs LIVE baseline: "
+                f"{'MATCH' if fp == live_fp else 'DIFFERS (informational)'}")
 
     missing = [c for c in KEY_COLS if c not in header]
     if missing:
@@ -316,6 +404,9 @@ def cmd_process():
     if not m or m.group(1)[:3] not in MONTHS:
         fail(f"unrecognised Period value: {period_raw!r}")
     month = f"{m.group(2)}-{MONTHS[m.group(1)[:3]]:02d}"
+    if BACKFILL and month != BACKFILL:
+        fail(f"backfill safety: requested month {BACKFILL} but the fetched file "
+             f"contains {month} — wrong file, refusing to publish")
 
     uppers = [u for _, u in bands]
     new_rows = []
@@ -342,16 +433,25 @@ def cmd_process():
     hist = []
     if os.path.exists(hist_path):
         hist = [json.loads(l) for l in open(hist_path) if l.strip()]
-    if hist:
-        trailing = [h["normalised_rows"] for h in hist[-6:]]
+    # Backfill row counts are compared WITHIN the backfill sequence (baseline
+    # arms from the first backfill month, D-028); live ingests keep comparing
+    # against the trailing window of all prior ingests.
+    if BACKFILL:
+        gate_hist = [h for h in hist if h.get("mode") == "backfill"]
+    else:
+        gate_hist = hist
+    if gate_hist:
+        trailing = [h["normalised_rows"] for h in gate_hist[-6:]]
         avg = sum(trailing) / len(trailing)
         delta = (len(new_rows) - avg) / avg
         if abs(delta) > 0.20:
             fail(f"GATE row-count: {len(new_rows)} rows vs trailing avg {avg:.0f} "
                  f"({delta:+.0%}) exceeds +/-20% — publish blocked, last-good untouched")
-        log(f"gate row-count OK ({delta:+.1%} vs trailing avg)")
+        log(f"gate row-count OK ({delta:+.1%} vs trailing avg"
+            f"{' of backfill sequence' if BACKFILL else ''})")
     else:
-        log("gate row-count: no history yet (first ingest) — recording baseline")
+        log(f"gate row-count: no {'backfill ' if BACKFILL else ''}history yet "
+            "(first ingest of this sequence) — recording baseline")
 
     ceilings = {"provider_code": 0.005, "specialty_code": 0.005, "waiting_list": 0.005,
                 "provider_name": 0.05}
@@ -362,12 +462,16 @@ def cmd_process():
             fail(f"GATE null-rate: {col} {rate:.1%} > ceiling {ceil:.1%} — publish blocked")
     log("gate null-rates OK")
 
-    y, mo = int(month[:4]), int(month[5:7])
-    age_days = (date.today() - date(y, mo, 28)).days
-    if age_days > 150:
-        fail(f"GATE staleness: newest data month {month} is {age_days} days old "
-             "(>150) — source has gone stale, investigate publication schedule")
-    log(f"gate staleness OK (data month {month}, ~{age_days}d old)")
+    if BACKFILL:
+        log("gate staleness N/A (backfill: historical vintage, "
+            "as-published-at-download)")
+    else:
+        y, mo = int(month[:4]), int(month[5:7])
+        age_days = (date.today() - date(y, mo, 28)).days
+        if age_days > 150:
+            fail(f"GATE staleness: newest data month {month} is {age_days} days old "
+                 "(>150) — source has gone stale, investigate publication schedule")
+        log(f"gate staleness OK (data month {month}, ~{age_days}d old)")
 
     bad = [r_ for r_ in new_rows
            if r_["pct_within_18_weeks"] and not 0 <= float(r_["pct_within_18_weeks"]) <= 100]
@@ -391,12 +495,17 @@ def cmd_process():
              "This is itself a gate: drill runs never publish.")
 
     # ---- publish: merge with prior months, write normalised CSV + summary
+    # History-accumulation contract (ADR-04): keep every month ever ingested;
+    # latest vintage wins per row_key (this ingest replaces ONLY its own
+    # month's rows); deterministic (month, provider, specialty) ordering.
     fieldnames = list(new_rows[0].keys())
     old_rows = []
     if os.path.exists(NORM_CSV):
         with open(NORM_CSV, newline="") as f:
             old_rows = [r_ for r_ in csv.DictReader(f) if r_["month"] != month]
-    merged = old_rows + new_rows
+    merged = sorted(old_rows + new_rows,
+                    key=lambda r_: (r_["month"], r_["provider_code"],
+                                    r_["specialty_code"]))
     os.makedirs(NORM_DIR, exist_ok=True)
     with open(NORM_CSV, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -416,6 +525,10 @@ def cmd_process():
         "waiting_list_total_latest_month": sum(
             int(r_["waiting_list"]) for r_ in merged
             if r_["month"] == months[-1] and r_["specialty_code"] == "C_999"),
+        # NB: the raw_* / source_url fields describe the LAST INGEST (which
+        # during a backfill is a historical month), not necessarily
+        # latest_month — last_ingest_month disambiguates.
+        "last_ingest_month": month,
         "raw_release_tag": meta["tag"],
         "source_url": meta["source_url"],
         "raw_sha256": meta["sha256"],
@@ -423,16 +536,29 @@ def cmd_process():
     with open(SUMMARY_JSON, "w") as f:
         json.dump(summary, f, indent=2)
 
+    # ---- per-entity month-on-month deltas for the W4 send job (ADR-02).
+    # Computed from the accumulated layer: latest month vs its previous
+    # CALENDAR month (empty until that month exists — no fake deltas).
+    deltas = compute_deltas(merged)
+    os.makedirs(DELTAS_DIR, exist_ok=True)
+    with open(DELTAS_JSON, "w") as f:
+        json.dump(deltas, f)
+    n_material = sum(1 for e in deltas["entities"] if e["material"])
+    log(f"deltas: {deltas['month']} vs {deltas['prev_month']} -> "
+        f"{len(deltas['entities'])} entities, {n_material} material")
+
     # ---- update state (fingerprint, checksum ledger, ingest history)
     os.makedirs(STATE, exist_ok=True)
     with open(fp_path, "w") as f:
         f.write(f"{fp}  recorded {datetime.now(timezone.utc).isoformat()}\n")
     with open(os.path.join(STATE, "raw_checksums.txt"), "a") as f:
         f.write(f"{meta['sha256']}  {meta['tag']}  {meta['source_url']}\n")
+    hist_entry = {"date": date.today().isoformat(), "month": month,
+                  "normalised_rows": len(new_rows), "source_rows": src_rows}
+    if BACKFILL:
+        hist_entry["mode"] = "backfill"
     with open(hist_path, "a") as f:
-        f.write(json.dumps({"date": date.today().isoformat(), "month": month,
-                            "normalised_rows": len(new_rows),
-                            "source_rows": src_rows}) + "\n")
+        f.write(json.dumps(hist_entry) + "\n")
     log(f"published: {len(merged)} rows, summary: {json.dumps(summary)}")
     gh_output("month", month)
 

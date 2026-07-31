@@ -26,11 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DRILL: ${{ (inputs.drill != '' && inputs.drill != 'none') && inputs.drill || '' }}
+      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install csv-diff
         run: pip install --quiet csv-diff
+
+      - name: Unit tests (ADR-02 threshold module)
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Fetch + checksum dedupe
         id: fetch
@@ -82,6 +86,19 @@ jobs:
           git add data state
           git commit -m "ingest: ${{ steps.process.outputs.month }} (raw ${{ steps.fetch.outputs.tag }})"
           git push
+
+      - name: Notify web repo (repository_dispatch)
+        # GITHUB_TOKEN cannot dispatch cross-repo; DISPATCH_TOKEN is an
+        # owner-provisioned fine-grained PAT (contents:write on the web repo
+        # only). Until the owner adds it, this step is SKIPPED (never
+        # failed) — owner batch item.
+        if: steps.fetch.outputs.changed == 'true' && env.DISPATCH_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.DISPATCH_TOKEN }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY_OWNER}/testrun-nhswaits-web/dispatches" \
+            -f event_type=data-updated \
+            -f "client_payload[month]=${{ steps.process.outputs.month }}"
 
       - name: Heartbeat (PLACEHOLDER — Healthchecks.io not provisioned, batch #0 gap)
         if: success()

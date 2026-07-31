@@ -1,0 +1,54 @@
+name: backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Backfill month YYYY-MM (single month, or the START of a range)"
+        required: true
+        type: string
+      until:
+        description: "Optional end month YYYY-MM — loop mode, oldest -> newest inclusive"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+# Shares the ingest concurrency group: a backfill never races the scheduled
+# live ingest (both mutate the same normalised layer + state).
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    env:
+      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install csv-diff
+        run: pip install --quiet csv-diff
+
+      - name: Unit tests (ADR-02 threshold module)
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+      - name: Supervised backfill (fetch -> raw archive -> gates -> append, per month)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/backfill.sh "${{ inputs.month }}" "${{ inputs.until }}"
+
+      - name: Notify web repo (repository_dispatch)
+        # GITHUB_TOKEN cannot dispatch cross-repo; DISPATCH_TOKEN is an
+        # owner-provisioned fine-grained PAT. Until it exists this step is
+        # SKIPPED (never failed) — owner batch item.
+        if: env.DISPATCH_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.DISPATCH_TOKEN }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY_OWNER}/testrun-nhswaits-web/dispatches" \
+            -f event_type=data-updated \
+            -f "client_payload[reason]=backfill"
