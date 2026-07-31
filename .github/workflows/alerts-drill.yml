@@ -1,0 +1,55 @@
+name: alerts-drill
+
+# The AC §G4 end-to-end proof, run on every change to the alerts code and once a
+# week so it cannot rot. No accounts, no spend: the alerts-api Worker runs under
+# `wrangler dev --local` with a local D1 and tools/mailcatcher.py stands in for
+# the ESP. If this workflow is green, the loop works.
+
+on:
+  push:
+    paths:
+      - 'alerts-api/**'
+      - 'scripts/alerts_send.py'
+      - 'scripts/alerts_thresholds.py'
+      - 'scripts/make_drill_deltas.py'
+      - 'scripts/alert_drill.sh'
+      - 'tools/mailcatcher.py'
+      - '.github/workflows/alerts-drill.yml'
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests (thresholds + alert template)
+        run: PYTHONPATH=scripts python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Install alerts-api dependencies
+        working-directory: alerts-api
+        run: npm install --no-audit --no-fund
+      - name: Typecheck the Worker
+        working-directory: alerts-api
+        run: npx tsc --noEmit
+      - name: Local dev vars (no real secrets exist for a proof-of-concept build)
+        working-directory: alerts-api
+        run: |
+          cat > .dev.vars <<'VARS'
+          ADMIN_SECRET = "local-drill-admin-secret"
+          TOKEN_SECRET = "local-drill-token-secret"
+          MAIL_API_URL = "http://127.0.0.1:1080/email"
+          MAIL_API_TOKEN = "local-catcher-no-account"
+          VARS
+      - name: Run the alert drill
+        run: bash scripts/alert_drill.sh "$GITHUB_WORKSPACE/drill-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alert-drill-evidence
+          path: drill-evidence
+          retention-days: 30

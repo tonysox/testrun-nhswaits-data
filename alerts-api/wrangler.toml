@@ -1,0 +1,27 @@
+# alerts-api (ARCHITECTURE ADR-01). Deploy is owed until the account token
+# carries Workers + D1 scopes; everything below runs today under
+# `wrangler dev --local`, which gives a real Worker runtime and a real local D1.
+name = "turnbeck-alerts-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+workers_dev = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "turnbeck-alerts"
+# Filled in by `wrangler d1 create turnbeck-alerts` when the token allows it.
+# `--local` ignores this id and uses the miniflare SQLite file.
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[vars]
+SITE_ORIGIN = "https://testrun-nhswaits.pages.dev"
+API_ORIGIN = "http://127.0.0.1:8787"
+MAIL_FROM = "alerts@turnbeck.invalid"
+MAIL_API_URL = ""
+MAIL_API_TOKEN = ""
+ALLOWED_ORIGINS = "*"
+# ADMIN_SECRET and TOKEN_SECRET are secrets in a deployed Worker
+# (`wrangler secret put`). Local runs pass them through .dev.vars, which is
+# gitignored. Turnstile is absent locally on purpose: no account is opened for
+# a proof-of-concept, and the code treats "no secret" as "skip the human check"
+# rather than silently passing a check it never ran.

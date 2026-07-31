@@ -100,6 +100,33 @@ jobs:
             -f event_type=data-updated \
             -f "client_payload[month]=${{ steps.process.outputs.month }}"
 
+      - name: Send alerts (ADR-02)
+        # Runs in the SAME run as the publish, off the deltas document the
+        # pipeline just wrote. SKIPPED (never failed) until the alerts-api
+        # Worker is deployed and its secrets exist — deploy is blocked on D1
+        # scope in the account token (interim register #3). The whole loop is
+        # proven locally today by scripts/alert_drill.sh.
+        if: steps.fetch.outputs.changed == 'true' && env.ALERTS_API_URL != ''
+        env:
+          ALERTS_API_URL: ${{ secrets.ALERTS_API_URL }}
+          ALERTS_ADMIN_SECRET: ${{ secrets.ALERTS_ADMIN_SECRET }}
+          MAIL_API_URL: ${{ secrets.MAIL_API_URL }}
+          MAIL_API_TOKEN: ${{ secrets.MAIL_API_TOKEN }}
+        run: |
+          PYTHONPATH=scripts python3 scripts/alerts_send.py \
+            --deltas data/deltas/latest.json \
+            --api "$ALERTS_API_URL" --admin-secret "$ALERTS_ADMIN_SECRET" \
+            --mail-url "$MAIL_API_URL" --mail-token "$MAIL_API_TOKEN"
+
+      - name: Alerts step skipped (no backend yet)
+        if: steps.fetch.outputs.changed == 'true' && env.ALERTS_API_URL == ''
+        env:
+          ALERTS_API_URL: ${{ secrets.ALERTS_API_URL }}
+        run: |
+          echo "alerts: SKIPPED — alerts-api is not deployed yet (D1 scope missing"
+          echo "from the account token). Nothing was sent and nothing failed."
+          echo "The full loop is proven locally: bash scripts/alert_drill.sh"
+
       - name: Heartbeat (PLACEHOLDER — Healthchecks.io not provisioned, batch #0 gap)
         if: success()
         run: |
