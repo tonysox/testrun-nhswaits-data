@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-31T14:09:27.593426+00:00",
+  "generated_at": "2026-07-31T14:09:34.888171+00:00",
   "months_present": [
     "2024-05",
     "2024-06",
@@ -11,15 +11,16 @@
     "2024-12",
     "2025-01",
     "2025-02",
+    "2025-03",
     "2026-05"
   ],
   "latest_month": "2026-05",
-  "trusts": 559,
+  "trusts": 560,
   "specialties": 24,
-  "rows": 44824,
+  "rows": 48891,
   "waiting_list_total_latest_month": 7184233,
-  "last_ingest_month": "2025-02",
-  "raw_release_tag": "raw-backfill-2025-02",
-  "source_url": "https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2025/07/Full-CSV-data-file-Feb25-ZIP-4M-revised.zip",
-  "raw_sha256": "7b3b57ac8b93f063d1f2c08e705daa42595aaae87619b88f71edf6128a115d22"
+  "last_ingest_month": "2025-03",
+  "raw_release_tag": "raw-backfill-2025-03",
+  "source_url": "https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2025/07/Full-CSV-data-file-Mar25-ZIP-4M-revised.zip",
+  "raw_sha256": "9f2c5608ebfb11d6f07815346c365f536b2c15dcca5f59ccc71a98cb3ec6761c"
 }
