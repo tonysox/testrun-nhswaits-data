@@ -27,6 +27,17 @@ built to `STANDARD-data-pipeline.md`:
   schema fingerprint (ordered column+dtype hash) · row-count delta ±20% vs trailing
   average · null-rate ceilings on key columns · staleness (>150 days) · sanity.
 - **Heartbeat** — placeholder step; production pings Healthchecks.io on success only.
+- **Locations layer (ADR-03)** — `.github/workflows/locations.yml` (manual
+  `workflow_dispatch`; occasional refresh, never on the ingest cron) runs
+  `scripts/locations.py`: every provider_code in the normalised layer is
+  resolved to name+postcode via the NHS ODS ORD API (legal contract +
+  ~Sept-2027 deprecation diary in `pipeline/SOURCES/ods-locations.md` — never
+  legacy etr/ets), joined to coordinates via the latest ONSPD (**all BT\*
+  postcodes stripped at ingest** — NI licence carve-out, gated; see
+  `pipeline/SOURCES/onspd.md`). Emits `data/locations/providers.json`
+  (≥95% resolution gate, failures flagged), `outcodes.json` (~2,900 England
+  outcode centroids for the client-side near-you tool) and `nearest.json`
+  (8 nearest providers per provider, build-time haversine).
 
 Source: NHS England RTT statistical work area (full CSV data file, monthly,
 revised ~every 6 months — hence every raw vintage is kept).
