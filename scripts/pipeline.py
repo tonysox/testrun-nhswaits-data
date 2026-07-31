@@ -25,6 +25,14 @@ Env:
                for historical vintages) and append to the accumulated layer.
                Gate failure = the month is skipped and logged by the driver
                (scripts/backfill.sh), never force-parsed.
+  RECOMPUTE=true
+               re-derivation mode: `process` re-normalises an ALREADY-ARCHIVED
+               raw vintage (work/raw.zip + work/meta.json staged by
+               scripts/recompute.sh from the raw-* / raw-backfill-* Releases).
+               All parse + gate logic runs unchanged; the state ledgers
+               (raw_checksums.txt, ingest_history.jsonl, fingerprint stamps)
+               are NOT appended — a recompute is not a new ingest.
+               Combine with BACKFILL_MONTH for backfill-vintage semantics.
   WORK_DIR     scratch dir (default ./work)
 
 History-accumulation contract (ADR-04, pinned in pipeline/SOURCES/nhs-rtt.md):
@@ -68,6 +76,10 @@ if BACKFILL and not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", BACKFILL):
     sys.exit(2)
 if BACKFILL and DRILL:
     print("::error::BACKFILL_MONTH and DRILL are mutually exclusive")
+    sys.exit(2)
+RECOMPUTE = os.environ.get("RECOMPUTE", "").lower() == "true"
+if RECOMPUTE and DRILL:
+    print("::error::RECOMPUTE and DRILL are mutually exclusive")
     sys.exit(2)
 
 MONTHS = {m: i + 1 for i, m in enumerate(
@@ -275,6 +287,31 @@ def num(v):
     return float(v)
 
 
+def pct_within_18(uppers, band_counts):
+    """% of the incomplete-pathways waiting list at <= 18 weeks, from the
+    week-band columns. uppers[i] is the upper bound (weeks) of band i
+    (999 = the open-ended 'Gt 104 Weeks' band); band_counts[i] its count.
+
+    Denominator = sum of ALL band counts (= patients with a known clock
+    start). The source's own 'Total' column CANNOT be the denominator: it is
+    blank on every Incomplete Pathways row of the extract (only the Completed
+    Pathways parts populate it) — that blank column is why this metric was
+    silently empty for every published row until W0c. The band-sum
+    denominator reproduces NHS's published national 'within 18 weeks' figure
+    (65.5% for May 2026) exactly.
+
+    Null-honesty: if the bands sum to zero (all cells blank/zero — e.g. a row
+    whose patients all have an unknown clock start), no percentage is
+    computable and '' (null) is returned — never a fake 0. Blank individual
+    band cells count as 0, the same convention median_from_bands uses.
+    """
+    denom = sum(band_counts)
+    if denom <= 0:
+        return ""
+    within = sum(c for u, c in zip(uppers, band_counts) if u <= 18)
+    return f"{100.0 * within / denom:.1f}"
+
+
 def median_from_bands(band_counts):
     """band_counts: list of (upper_week, count) ascending. Linear interpolation."""
     total = sum(c for _, c in band_counts)
@@ -390,11 +427,13 @@ def cmd_process():
                    row[idx["Provider Org Name"]].strip(),
                    row[idx["Treatment Function Code"]].strip(),
                    row[idx["Treatment Function Name"]].strip())
-            a = agg.setdefault(key, {"bands": [0.0] * len(bands), "total": 0.0,
+            a = agg.setdefault(key, {"bands": [0.0] * len(bands),
                                      "total_all": 0.0})
             for bi, (ci, _) in enumerate(bands):
                 a["bands"][bi] += num(row[ci]) if ci < len(row) else 0.0
-            a["total"] += num(row[idx["Total"]])
+            # NB: the 'Total' column is NOT aggregated — it is blank on every
+            # Incomplete Pathways row (see pct_within_18); 'Total All' is the
+            # published waiting-list size (bands + unknown clock start).
             a["total_all"] += num(row[idx["Total All"]])
 
     if not agg or not period_raw:
@@ -411,8 +450,7 @@ def cmd_process():
     uppers = [u for _, u in bands]
     new_rows = []
     for (pcode, pname, tfcode, tfname), a in sorted(agg.items()):
-        within18 = sum(c for u, c in zip(uppers, a["bands"]) if u <= 18)
-        pct18 = f"{100.0 * within18 / a['total']:.1f}" if a["total"] > 0 else ""
+        pct18 = pct_within_18(uppers, a["bands"])
         med = median_from_bands(sorted(zip(uppers, a["bands"])))
         new_rows.append({
             "row_key": f"{month}|{pcode}|{tfcode}",
@@ -548,17 +586,22 @@ def cmd_process():
         f"{len(deltas['entities'])} entities, {n_material} material")
 
     # ---- update state (fingerprint, checksum ledger, ingest history)
-    os.makedirs(STATE, exist_ok=True)
-    with open(fp_path, "w") as f:
-        f.write(f"{fp}  recorded {datetime.now(timezone.utc).isoformat()}\n")
-    with open(os.path.join(STATE, "raw_checksums.txt"), "a") as f:
-        f.write(f"{meta['sha256']}  {meta['tag']}  {meta['source_url']}\n")
-    hist_entry = {"date": date.today().isoformat(), "month": month,
-                  "normalised_rows": len(new_rows), "source_rows": src_rows}
-    if BACKFILL:
-        hist_entry["mode"] = "backfill"
-    with open(hist_path, "a") as f:
-        f.write(json.dumps(hist_entry) + "\n")
+    if RECOMPUTE:
+        log("recompute: state ledgers untouched (this raw vintage is already "
+            "checksummed + in ingest history; a recompute is a re-derivation, "
+            "not a new ingest)")
+    else:
+        os.makedirs(STATE, exist_ok=True)
+        with open(fp_path, "w") as f:
+            f.write(f"{fp}  recorded {datetime.now(timezone.utc).isoformat()}\n")
+        with open(os.path.join(STATE, "raw_checksums.txt"), "a") as f:
+            f.write(f"{meta['sha256']}  {meta['tag']}  {meta['source_url']}\n")
+        hist_entry = {"date": date.today().isoformat(), "month": month,
+                      "normalised_rows": len(new_rows), "source_rows": src_rows}
+        if BACKFILL:
+            hist_entry["mode"] = "backfill"
+        with open(hist_path, "a") as f:
+            f.write(json.dumps(hist_entry) + "\n")
     log(f"published: {len(merged)} rows, summary: {json.dumps(summary)}")
     gh_output("month", month)
 

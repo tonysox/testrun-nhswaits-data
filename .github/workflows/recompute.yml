@@ -1,0 +1,46 @@
+name: recompute
+
+# Full re-derivation of the normalised layer from the archived raw Releases
+# (W0c). Deliberate, operator-triggered only: used when a normalisation bug
+# is fixed and every vintage must be recomputed from the immutable raw bytes.
+# Publishes ONE commit, and only after scripts/recompute_verify.py proves the
+# diff is confined to the intended column(s).
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why (goes into the commit message)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# Shares the ingest concurrency group: a recompute never races the scheduled
+# live ingest or a backfill (all mutate the same normalised layer).
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  recompute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+      - name: Recompute all vintages from archived raw (gates + verify)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/recompute.sh
+
+      - name: Commit + push recomputed normalised layer
+        run: |
+          rm -f work_before_recompute.csv
+          git config user.name "nhswaits-pipeline"
+          git config user.email "actions@users.noreply.github.com"
+          git add data
+          git commit -m "recompute: ${{ inputs.reason }}"
+          git push

@@ -44,6 +44,29 @@ trust × specialty per month.
   failing month is skipped and logged (`state/backfill_log.jsonl`), never
   force-parsed.
 
+## Blank-`Total` quirk + derived measures (normalised schema)
+
+The extract's `Total` column is **blank on every Incomplete Pathways row**
+(only the Completed Pathways parts populate it) — never divide by it. The
+normalised layer (`month, provider_code/name, specialty_code/name` +
+measures) derives, per trust × specialty × month, from the week-band columns:
+
+- `waiting_list` = sum of `Total All` (bands + patients with an unknown
+  clock start) — the published waiting-list size.
+- `median_wait_weeks_est` = linear interpolation across the cumulated bands.
+- `pct_within_18_weeks` = sum of the ≤18-week band counts (`Gt 00 To 01` …
+  `Gt 17 To 18`) ÷ sum of **all** band counts (= patients with a known clock
+  start), 1 dp. This band-sum denominator reproduces NHS's published
+  national "within 18 weeks" figure exactly (65.5% for May 2026, verified
+  against the C_999 rows in the W0c recompute).
+- **Null-honesty:** a row whose bands sum to zero gets `''` (null) for the
+  band-derived measures — never a fake 0. Blank band cells count as 0.
+- History note: rows published before the W0c full recompute (2026-07) had
+  `pct_within_18_weeks` empty — the old code divided by the blank `Total`
+  column. Fixed in normalisation and recomputed across all vintages from the
+  archived raw releases (`.github/workflows/recompute.yml`); evidence in
+  `data/diffs/*-recompute-pct.txt`.
+
 ## Embedded-totals quirk (C_999)
 
 The extract embeds its own per-trust totals as specialty code **`C_999`
