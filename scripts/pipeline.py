@@ -62,6 +62,9 @@ STATE = os.path.join(REPO_ROOT, "state")
 NORM_DIR = os.path.join(REPO_ROOT, "data", "normalised")
 DIFF_DIR = os.path.join(REPO_ROOT, "data", "diffs")
 NORM_CSV = os.path.join(NORM_DIR, "rtt_trust_specialty.csv")
+# National per-specialty series, patient-weighted (D-101). One row per
+# month|specialty; consumed by the web build as THE England comparison figure.
+NAT_CSV = os.path.join(NORM_DIR, "national_medians.csv")
 SUMMARY_JSON = os.path.join(NORM_DIR, "summary.json")
 DELTAS_DIR = os.path.join(REPO_ROOT, "data", "deltas")
 DELTAS_JSON = os.path.join(DELTAS_DIR, "latest.json")
@@ -448,6 +451,45 @@ def cmd_process():
              f"contains {month} — wrong file, refusing to publish")
 
     uppers = [u for _, u in bands]
+
+    # ---- national per-specialty aggregate (QA D-101).
+    # The national "typical wait" for a specialty MUST be patient-weighted: the
+    # median of ONE pooled England-wide distribution, not the median of 500-odd
+    # provider medians. Taking the median of provider medians lets a 68-patient
+    # clinic count the same as a 3,370-patient trust, which understated the
+    # England figure on every specialty and flipped the direction of the site's
+    # headline "vs England" comparison on 26% of result pages.
+    # Here we sum each weekly band across every provider reporting the
+    # specialty, then run the SAME median_from_bands/pct_within_18 estimators
+    # over that pooled distribution — so the national figure and the per-trust
+    # figure are computed by identical maths on different populations.
+    nat_agg = {}
+    for (pcode, pname, tfcode, tfname), a in agg.items():
+        n = nat_agg.setdefault(tfcode, {"bands": [0.0] * len(bands),
+                                        "total_all": 0.0,
+                                        "providers": 0,
+                                        "names": {}})
+        for bi in range(len(bands)):
+            n["bands"][bi] += a["bands"][bi]
+        n["total_all"] += a["total_all"]
+        n["providers"] += 1
+        n["names"][tfname] = n["names"].get(tfname, 0) + 1
+
+    nat_rows = []
+    for tfcode, n in sorted(nat_agg.items()):
+        # specialty_name is near-constant across providers; take the modal one.
+        tfname = max(n["names"].items(), key=lambda kv: (kv[1], kv[0]))[0]
+        nat_rows.append({
+            "row_key": f"{month}|{tfcode}",
+            "month": month,
+            "specialty_code": tfcode,
+            "specialty_name": tfname,
+            "providers": str(n["providers"]),
+            "waiting_list": str(int(n["total_all"])),
+            "median_wait_weeks_est": median_from_bands(sorted(zip(uppers, n["bands"]))),
+            "pct_within_18_weeks": pct_within_18(uppers, n["bands"]),
+        })
+
     new_rows = []
     for (pcode, pname, tfcode, tfname), a in sorted(agg.items()):
         pct18 = pct_within_18(uppers, a["bands"])
@@ -526,6 +568,36 @@ def cmd_process():
              f"{sum_spec_rows} differ by >1%")
     log("gate sanity + cross-foot OK")
 
+    # ---- gates on the national per-specialty series (D-101)
+    if len(nat_rows) != len({r_["specialty_code"] for r_ in new_rows}):
+        fail(f"GATE national: {len(nat_rows)} national rows vs "
+             f"{len({r_['specialty_code'] for r_ in new_rows})} specialties in the "
+             "trust layer — the national aggregate lost or invented a specialty")
+    empty_med = [r_ for r_ in nat_rows if not r_["median_wait_weeks_est"]]
+    if empty_med:
+        fail(f"GATE national: {len(empty_med)} specialties have no computable "
+             "national median — refusing to publish an England figure we cannot derive")
+    nat_c999 = next((r_ for r_ in nat_rows if r_["specialty_code"] == "C_999"), None)
+    if nat_c999 and int(nat_c999["waiting_list"]) != sum_total_rows:
+        fail(f"GATE national cross-foot: national C_999 waiting list "
+             f"{nat_c999['waiting_list']} != trust-layer C_999 sum {sum_total_rows}")
+    # A patient-weighted national median must sit inside the range of the
+    # provider medians it pools; outside that range means a summing bug.
+    med_by_spec = {}
+    for r_ in new_rows:
+        if r_["median_wait_weeks_est"]:
+            med_by_spec.setdefault(r_["specialty_code"], []).append(
+                float(r_["median_wait_weeks_est"]))
+    for r_ in nat_rows:
+        pool = med_by_spec.get(r_["specialty_code"], [])
+        if not pool:
+            continue
+        v = float(r_["median_wait_weeks_est"])
+        if not (min(pool) - 0.05 <= v <= max(pool) + 0.05):
+            fail(f"GATE national range: {r_['specialty_code']} national median {v} "
+                 f"outside provider range [{min(pool)}, {max(pool)}]")
+    log(f"gate national OK ({len(nat_rows)} specialties, patient-weighted)")
+
     if DRILL:
         # Belt and braces: the drill must never publish even if the corruption
         # somehow slipped every gate above.
@@ -550,7 +622,44 @@ def cmd_process():
         w.writeheader()
         w.writerows(merged)
 
+    # National per-specialty series: same accumulate + latest-vintage-wins
+    # contract, keyed on month|specialty (D-101).
+    nat_fieldnames = list(nat_rows[0].keys())
+    nat_old = []
+    if os.path.exists(NAT_CSV):
+        with open(NAT_CSV, newline="") as f:
+            nat_old = [r_ for r_ in csv.DictReader(f) if r_["month"] != month]
+    nat_merged = sorted(nat_old + nat_rows,
+                        key=lambda r_: (r_["month"], r_["specialty_code"]))
+    with open(NAT_CSV, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=nat_fieldnames)
+        w.writeheader()
+        w.writerows(nat_merged)
+
     months = sorted({r_["month"] for r_ in merged})
+
+    # Per-month provenance (D-109): summary.raw_* describe the LAST INGEST,
+    # which during a backfill is not the month the site displays. A page that
+    # cites its source file (schema.org Dataset.isBasedOn) needs the file THAT
+    # month came from, so record it per month and carry prior entries forward.
+    month_sources = {}
+    if os.path.exists(SUMMARY_JSON):
+        try:
+            month_sources = json.load(open(SUMMARY_JSON)).get("month_sources", {}) or {}
+        except (ValueError, OSError):
+            month_sources = {}
+    month_sources[month] = {
+        "source_url": meta["source_url"],
+        "raw_sha256": meta["sha256"],
+        "raw_release_tag": meta["tag"],
+        "derived_at": datetime.now(timezone.utc).isoformat(),
+    }
+    month_sources = {k: month_sources[k] for k in sorted(month_sources) if k in months}
+    missing_prov = [m_ for m_ in months if m_ not in month_sources]
+    if missing_prov:
+        log(f"note: {len(missing_prov)} month(s) have no recorded source file yet "
+            f"(pre-dating the provenance ledger): {missing_prov[:3]}...")
+
     summary = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "months_present": months,
@@ -570,6 +679,21 @@ def cmd_process():
         "raw_release_tag": meta["tag"],
         "source_url": meta["source_url"],
         "raw_sha256": meta["sha256"],
+        # Per-month provenance: which source file each displayed month came
+        # from (D-109). Consumers citing a month MUST read this, not the
+        # last-ingest fields above.
+        "month_sources": month_sources,
+        # The national per-specialty layer and how it is derived, stated in the
+        # contract itself so a consumer cannot mistake it for an average of
+        # provider figures (D-101).
+        "national_medians_file": "national_medians.csv",
+        "national_medians_method": (
+            "patient-weighted: the weekly wait bands are summed across every "
+            "provider reporting the specialty in the month, then the median is "
+            "interpolated from that single pooled distribution — the same "
+            "estimator used for each provider row, applied to England as one "
+            "queue. It is NOT the median (or mean) of provider medians."),
+        "national_medians_rows": len(nat_merged),
     }
     with open(SUMMARY_JSON, "w") as f:
         json.dump(summary, f, indent=2)

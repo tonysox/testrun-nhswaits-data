@@ -67,6 +67,34 @@ measures) derives, per trust × specialty × month, from the week-band columns:
   archived raw releases (`.github/workflows/recompute.yml`); evidence in
   `data/diffs/*-recompute-pct.txt`.
 
+## The national per-specialty layer (`national_medians.csv`)
+
+A "typical for England" figure must be **patient-weighted**. It is derived per
+specialty × month by summing every band across all providers reporting that
+specialty and then applying the same `median_from_bands` / `pct_within_18`
+estimators to that one pooled distribution — England treated as a single queue.
+
+Do **not** compute it as the median (or mean) of the per-provider
+`median_wait_weeks_est` values. That treats a 68-patient clinic as equal to a
+3,370-patient trust; measured on May 2026 it understated the patient-weighted
+figure on **all 24** treatment areas (+0.1 to +3.4 weeks) and changed the
+direction of a consumer's "vs England" comparison on 879 of 4,126 rows (QA
+D-101). Gates enforce it: the national row count must equal the specialty
+count, every specialty must yield a computable median, the national `C_999`
+waiting list must cross-foot to the trust layer's `C_999` sum, and each
+national median must fall inside the range of the provider medians it pools.
+
+`summary.json` carries `national_medians_method` stating this in words, so a
+downstream consumer cannot mistake the column for an average of providers.
+
+## Per-month provenance (`summary.month_sources`)
+
+`summary.source_url` / `raw_sha256` / `raw_release_tag` describe the **last
+ingest**, which during a backfill is a historical month — not `latest_month`.
+Anything citing the provenance of a DISPLAYED month (e.g. a schema.org
+`Dataset.isBasedOn`) must read `summary.month_sources[<month>]`, which records
+the source URL, checksum and release tag for each month present (QA D-109).
+
 ## Embedded-totals quirk (C_999)
 
 The extract embeds its own per-trust totals as specialty code **`C_999`

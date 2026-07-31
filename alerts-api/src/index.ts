@@ -374,6 +374,35 @@ async function unsubscribe(env: Env, req: Request, payload: TokenPayload, method
 }
 
 // ---------------------------------------------------------------------------
+// Startup guard (QA D-108). Every security property of this Worker rests on
+// two secrets: TOKEN_SECRET signs the confirm/unsubscribe tokens, ADMIN_SECRET
+// gates the consent export. Without them the Worker used to FAIL OPEN — it
+// minted tokens under a zero-length HMAC key (forgeable by anyone) and a bare
+// `Bearer ` header unlocked the admin export. The Workers runtime gives no
+// module-scope access to env, so the check runs before any route: no secrets,
+// no service. Refusing every request INCLUDING /api/health is deliberate — a
+// health check that goes green without secrets is how this ships broken again.
+const MIN_SECRET_LEN = 16;
+
+function secretsProblem(env: Env): string | null {
+  const missing: string[] = [];
+  const weak: string[] = [];
+  for (const name of ['TOKEN_SECRET', 'ADMIN_SECRET'] as const) {
+    const v = env[name];
+    if (typeof v !== 'string' || v.length === 0) missing.push(name);
+    else if (v.length < MIN_SECRET_LEN) weak.push(`${name} (${v.length} chars)`);
+  }
+  if (missing.length)
+    return (
+      `missing required secret(s): ${missing.join(', ')}. Set them with ` +
+      '`wrangler secret put <NAME>` on a deployed Worker, or in alerts-api/.dev.vars ' +
+      'locally (scripts/alert_drill.sh generates an ephemeral one). ' +
+      'The Worker refuses to serve without them.'
+    );
+  if (weak.length)
+    return `secret(s) shorter than the ${MIN_SECRET_LEN}-character minimum: ${weak.join(', ')}.`;
+  return null;
+}
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -381,6 +410,12 @@ export default {
     const cors = corsHeaders(env, req.headers.get('Origin'));
 
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+
+    const problem = secretsProblem(env);
+    if (problem) {
+      console.error(`alerts-api refusing to serve: ${problem}`);
+      return json({ error: 'misconfigured', detail: problem }, 503, cors);
+    }
 
     if (url.pathname === '/api/health') return json({ ok: true, at: nowIso() }, 200, cors);
 

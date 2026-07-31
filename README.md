@@ -21,6 +21,16 @@ built to `STANDARD-data-pipeline.md`:
   (row_key, month, provider code/name, specialty code/name, waiting-list size,
   estimated median wait in weeks, % within 18 weeks — Incomplete Pathways only),
   plus `data/normalised/summary.json` for the site build.
+- **National layer** — `data/normalised/national_medians.csv`
+  (row_key = `month|specialty`, providers reporting, England waiting-list size,
+  **patient-weighted** median wait, % within 18 weeks). One row per treatment
+  area per month. This is the ONLY sanctioned source for a "typical for
+  England" figure: it is derived by summing the weekly wait bands across every
+  provider reporting the specialty and interpolating the median of that single
+  pooled distribution. Taking the median (or mean) of provider medians is
+  **wrong** and is the defect this layer exists to prevent — it lets a
+  68-patient clinic weigh the same as a 3,370-patient trust and understates the
+  England figure on every treatment area (QA D-101).
 - **Diff layer** — `data/diffs/<stamp>.txt` csv-diff between consecutive versions
   (the alert-feed input).
 - **Gates** (fail loudly BEFORE publish; last-good stays untouched):

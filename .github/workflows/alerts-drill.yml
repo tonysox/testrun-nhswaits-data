@@ -36,16 +36,11 @@ jobs:
       - name: Typecheck the Worker
         working-directory: alerts-api
         run: npx tsc --noEmit
-      - name: Local dev vars (no real secrets exist for a proof-of-concept build)
-        working-directory: alerts-api
-        run: |
-          cat > .dev.vars <<'VARS'
-          ADMIN_SECRET = "local-drill-admin-secret"
-          TOKEN_SECRET = "local-drill-token-secret"
-          MAIL_API_URL = "http://127.0.0.1:1080/email"
-          MAIL_API_TOKEN = "local-catcher-no-account"
-          VARS
-      - name: Run the alert drill
+      # No .dev.vars step here, on purpose (QA D-108): CI must exercise the same
+      # path a clean clone does. scripts/alert_drill.sh generates its own
+      # ephemeral secrets and, before the real run, proves the Worker refuses to
+      # serve at all when TOKEN_SECRET is empty.
+      - name: Run the alert drill (clean-clone path — nothing pre-seeded)
         run: bash scripts/alert_drill.sh "$GITHUB_WORKSPACE/drill-evidence"
       - uses: actions/upload-artifact@v4
         if: always()
