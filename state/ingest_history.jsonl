@@ -15,3 +15,4 @@
 {"date": "2026-07-31", "month": "2025-06", "normalised_rows": 4089, "source_rows": 184744, "mode": "backfill"}
 {"date": "2026-07-31", "month": "2025-07", "normalised_rows": 4075, "source_rows": 184568, "mode": "backfill"}
 {"date": "2026-07-31", "month": "2025-08", "normalised_rows": 4071, "source_rows": 179028, "mode": "backfill"}
+{"date": "2026-07-31", "month": "2025-09", "normalised_rows": 4077, "source_rows": 184484, "mode": "backfill"}
