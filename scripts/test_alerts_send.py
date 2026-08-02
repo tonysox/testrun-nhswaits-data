@@ -59,6 +59,25 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("1 week longer", body)
         self.assertNotIn("1 weeks", body)
 
+    def test_a_tiny_queue_gets_no_typical_wait_in_the_email(self):
+        # STANDARD-data-pipeline 8.1 / QA D-120. An email is the one place the
+        # reader cannot click through to the caveat before believing the number,
+        # so the denominator floor has to hold here too.
+        _, body = self.render(ent(12.0, 30.0, prev_wl=4, curr_wl=3))
+        self.assertNotIn("typical wait for", body)
+        self.assertNotIn("about 30 weeks", body)
+        self.assertIn("too few for a reliable typical wait", body)
+
+    def test_the_floor_does_not_silence_a_real_queue(self):
+        # Two-sided: the fix must not turn every alert into a refusal.
+        _, body = self.render(ent(12.0, 14.0, prev_wl=400, curr_wl=420))
+        self.assertIn("typical wait for", body)
+        self.assertNotIn("too few for a reliable typical wait", body)
+
+    def test_a_queue_that_shrank_below_the_floor_stops_quoting_a_median(self):
+        _, body = self.render(ent(12.0, 14.0, prev_wl=400, curr_wl=8))
+        self.assertIn("too few for a reliable typical wait", body)
+
     def test_shorter_waits_read_as_shorter(self):
         _, body = self.render(ent(14.0, 11.5))
         self.assertIn("shorter", body)

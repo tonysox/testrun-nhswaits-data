@@ -56,6 +56,11 @@ def _request(url, method="GET", body=None, headers=None):
 # the template — read it as a patient would
 # ---------------------------------------------------------------------------
 
+# STANDARD-data-pipeline 8.1: below this many people waiting, no median is
+# quoted anywhere - page, hub, table, chart or email.
+SMALL_N_FLOOR = 20
+
+
 def render(watch, ent, month, prev_month, site_origin, page_path):
     """Plain-text service message. Reading age ~9; no jargon; no promotion."""
     label = watch["label"]
@@ -77,7 +82,23 @@ def render(watch, ent, month, prev_month, site_origin, page_path):
         med_now, med_prev = curr.get("med"), prev.get("med")
         wl_now, wl_prev = curr.get("wl"), prev.get("wl")
         headline_bits = []
-        if "median" in reasons and med_now is not None and med_prev is not None:
+        # THE DENOMINATOR FLOOR (STANDARD-data-pipeline 8.1, QA D-120).
+        # The site withholds the typical wait below n=20 because a median over a
+        # handful of people is one person's wait wearing a population's clothes.
+        # An email is the same figure in a different envelope, and it is the one
+        # place the reader cannot click through to the caveat before believing
+        # it — so the same floor applies, in the same words. The raw count is
+        # still sent, because a count is a fact the data can carry.
+        small_now = wl_now is not None and wl_now < SMALL_N_FLOOR
+        small_prev = wl_prev is not None and wl_prev < SMALL_N_FLOOR
+        if "median" in reasons and (small_now or small_prev):
+            subject = f"{label} — the number of people waiting has changed"
+            headline_bits.append(
+                f"Fewer than {SMALL_N_FLOOR} people are waiting here, which is too "
+                "few for a reliable typical wait, so we are not quoting one. We "
+                "only send you the count for this queue."
+            )
+        elif "median" in reasons and med_now is not None and med_prev is not None:
             # The sentence must add up as written. Both figures are shown
             # rounded to whole weeks (the site's headline rule), so the
             # difference is stated from the ROUNDED figures — never the raw

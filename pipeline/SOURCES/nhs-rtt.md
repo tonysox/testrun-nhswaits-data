@@ -164,3 +164,28 @@ month + link, shown beside every figure (YMYL source-beside-figure rule).
   Healthchecks heartbeat).
 - **Licence change tripwire:** any move away from OGL v3 on the RTT pages =
   stop ingest, escalate to owner (legal gate).
+
+## Known limits of the derived figures (added 2026-08-02, W8 remediation)
+
+Two properties of this source constrain what may be published from it. Both are
+enforced downstream (site + alert emails) and disclosed to readers at
+`/methodology/#estimate` and `/methodology/#small-numbers`.
+
+- **The top band is open-ended.** The last weekly-wait column is
+  `Gt 104 Weeks` — over 104 weeks, no upper bound. `median_from_bands()`
+  interpolates it as one week wide, so **the estimator can never return more
+  than about 105 weeks**, however long the real wait is. In 2026-05 two
+  hospital-and-treatment queues sit at that ceiling (max 104.5). A figure at or
+  near 105 must be read as "at least this long", never as a measurement, and
+  must never be presented as if the queue could be compared with a shorter one
+  on the same scale.
+- **Small denominators.** The file reports every provider that returns a row,
+  including queues of one or two people. A median over a handful of patients is
+  an individual's wait, and publishing it beside a named provider — with a
+  national comparison and switching advice — is a claim about a real business
+  that the data cannot carry (STANDARD-data-pipeline §8.1, QA D-120). The
+  published floor is **n < 20 waiting**: below it no typical wait, no England
+  comparison, no trend and no recommendation is derived, in any surface,
+  including alert emails (`scripts/alerts_send.py`, tested in
+  `scripts/test_alerts_send.py`). The raw count is still published. In 2026-05
+  that is 366 of 4,126 queues (8.9%).
