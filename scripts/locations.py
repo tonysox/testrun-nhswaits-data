@@ -23,9 +23,13 @@ Subcommands:
            - join provider postcode -> lat/lng;
            - ~2,900 outcode centroids (live, grid-referenced postcodes only);
          then gates, then publish:
-           data/locations/providers.json  (code, name, postcode, lat, lng)
+           data/locations/providers.json  (code, name, postcode, town, county,
+                                           lat, lng)
            data/locations/outcodes.json   (outcode -> [lat, lng])
            data/locations/nearest.json    (code -> 8 nearest provider codes+miles)
+
+  towns  back-fill `town`/`county` onto the PUBLISHED providers.json from the
+         same ORD API, without re-running the ~1GB ONSPD download (W10/D-157).
 
 Gates (all fail loudly before publish):
   G-L1 ODS resolution: every provider_code resolves or is flagged; >=95%
@@ -37,6 +41,9 @@ Gates (all fail loudly before publish):
   G-L5 coordinate sanity: published coords inside England bounding box.
   G-L6 outcodes.json payload: gzipped size reported; hard ceiling 80KB
        (ADR-03 target is <=60KB).
+  G-L7 label disambiguator (`towns`): every published provider resolves a town,
+       or nothing is written - a half-populated town field would disambiguate
+       some colliding display names and silently leave others ambiguous.
 """
 import csv
 import gzip
@@ -134,13 +141,22 @@ def cmd_ods():
         else:
             try:
                 org = json.loads(body)["Organisation"]
-                pc = org.get("GeoLoc", {}).get("Location", {}).get("PostCode")
+                loc = org.get("GeoLoc", {}).get("Location", {})
+                pc = loc.get("PostCode")
                 if not pc:
                     failures[code] = {"reason": "ODS record has no postcode",
                                       "rtt_name": rtt_name}
                 else:
                     records[code] = {"name": org["Name"],
                                      "postcode": pc,
+                                     # W10 / QA D-157: the PLACE. Two providers
+                                     # 420 miles apart both publish as "DUCHY
+                                     # HOSPITAL"; the town is what tells a
+                                     # reader which one they are looking at.
+                                     # County is the second resort for two
+                                     # same-named providers in the same town.
+                                     "town": (loc.get("Town") or "").strip(),
+                                     "county": (loc.get("County") or "").strip(),
                                      "status": org.get("Status"),
                                      "last_change": org.get("LastChangeDate")}
             except (KeyError, ValueError) as e:
@@ -330,6 +346,12 @@ def cmd_build():
             note = f"terminated postcode (doterm={doterm}) - coords still valid"
         p = {"code": code, "name": rec["name"], "postcode": rec["postcode"],
              "lat": round(lat, 5), "lng": round(lng, 5)}
+        # W10 / QA D-157: the label disambiguator. Published only when ODS
+        # actually carries it, so a consumer can tell "no town" from "no data".
+        if rec.get("town"):
+            p["town"] = rec["town"]
+        if rec.get("county"):
+            p["county"] = rec["county"]
         if note:
             p["note"] = note
         providers.append(p)
@@ -413,11 +435,69 @@ def cmd_build():
     print("published data/locations/{providers,outcodes,nearest}.json")
 
 
+# ---------------------------------------------------------------- towns
+def cmd_towns():
+    """Back-fill `town`/`county` onto an ALREADY PUBLISHED providers.json.
+
+    W10 / QA D-157. `build` now carries the town through from the `ods` pass,
+    but a full rebuild also re-downloads a ~1GB ONSPD zip and re-derives every
+    centroid — which would change coordinates that nobody asked to change, on a
+    wave whose only new requirement is a label. This step touches exactly one
+    field per provider, from exactly the same source `ods` uses, and records
+    when it did so. It is not a substitute for `build`: the next full run
+    produces the same field from the same API.
+
+    G-L7: every published provider must come back with a town, or the run
+    refuses to write. A partial town set would disambiguate some colliding
+    labels and silently leave others ambiguous, which is the defect.
+    """
+    path = os.path.join(LOC_DIR, "providers.json")
+    with open(path) as f:
+        doc = json.load(f)
+    providers = doc["providers"]
+    print(f"back-filling town/county for {len(providers)} published providers")
+    missing = []
+    for i, p in enumerate(providers):
+        status, body = http_get(f"{ORD_BASE}/{p['code']}", timeout=30)
+        town = county = ""
+        if status != 404:
+            try:
+                loc = json.loads(body)["Organisation"].get(
+                    "GeoLoc", {}).get("Location", {})
+                town = (loc.get("Town") or "").strip()
+                county = (loc.get("County") or "").strip()
+            except (KeyError, ValueError) as e:
+                print(f"  unparseable ODS response for {p['code']}: {e}")
+        if town:
+            p["town"] = town
+        else:
+            p.pop("town", None)
+            missing.append(p["code"])
+        if county:
+            p["county"] = county
+        else:
+            p.pop("county", None)
+        if (i + 1) % 100 == 0:
+            print(f"  {i + 1}/{len(providers)} looked up")
+        time.sleep(0.15)  # politeness: unauthenticated public API
+    if missing:
+        print(f"::error::G-L7 {len(missing)} published providers have no ODS "
+              f"town: {missing[:20]} - refusing to publish a half-usable "
+              "disambiguator")
+        sys.exit(1)
+    doc["ods_towns_fetched_at"] = utcnow()
+    with open(path, "w") as f:
+        json.dump(doc, f, indent=1)
+        f.write("\n")
+    print(f"published town/county for {len(providers)} providers in {path}")
+
+
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("ods", "onspd", "build"):
-        print("usage: locations.py ods|onspd|build")
+    if len(sys.argv) != 2 or sys.argv[1] not in ("ods", "onspd", "build", "towns"):
+        print("usage: locations.py ods|onspd|build|towns")
         sys.exit(2)
-    {"ods": cmd_ods, "onspd": cmd_onspd, "build": cmd_build}[sys.argv[1]]()
+    {"ods": cmd_ods, "onspd": cmd_onspd, "build": cmd_build,
+     "towns": cmd_towns}[sys.argv[1]]()
 
 
 if __name__ == "__main__":
