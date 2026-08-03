@@ -6,6 +6,8 @@ gate, not eyeballed: no promotional content, an unsubscribe line every time, a
 sentence whose arithmetic matches the figures it shows, and the threshold rule
 quoted from the versioned module rather than retyped.
 """
+import json
+import os
 import re
 import unittest
 
@@ -188,6 +190,197 @@ class FloorAppliesToTheWholeMessageTests(unittest.TestCase):
         # Two-sided: the guard must not stop an entitled message.
         subject, body = self.render(ent(12.0, 14.0, prev_wl=400, curr_wl=420))
         self.assertIn("14 weeks", f"{subject}\n{body}")
+
+
+class FloorBackstopSeesEqualValuesTests(unittest.TestCase):
+    """D-190. The backstop excluded the queue count from its probe with a raw
+    substring replace, which deletes those digits EVERYWHERE — so it could not
+    see a median that happened to equal the count. Verified blind at wl=9/med 9,
+    wl=14/med 14 and wl=18/med 18, and X7M7U ACES LAKESIDE (n=9, median 8.8 -> 9)
+    sits in that blind spot in the currently published month. Exclusion is now
+    by declared span, so equal values are two different spans.
+    """
+
+    def floored_ent(self, wl, med):
+        return {"key": "X", "prev": {"wl": wl, "med": float(med)},
+                "curr": {"wl": wl, "med": float(med)}, "reasons": ["median"]}
+
+    def test_a_median_equal_to_the_queue_count_is_still_seen(self):
+        for wl in (9, 14, 18):
+            with self.subTest(wl=wl):
+                with self.assertRaises(AssertionError):
+                    _floor(f"Now about {wl} weeks: Somewhere",
+                           f"{wl} people are waiting here.",
+                           self.floored_ent(wl, wl))
+
+    def test_the_published_aces_lakeside_case(self):
+        # X7M7U|C_130, 2026-05: wl 9, median 8.8, which rounds to 9.
+        ent_ = {"key": "X7M7U|C_130", "prev": {"wl": 11, "med": 4.2},
+                "curr": {"wl": 9, "med": 8.8}, "reasons": ["median"]}
+        with self.assertRaises(AssertionError):
+            _floor("Now about 9 weeks: Eye care at ACES Lakeside",
+                   "9 people are waiting here.", ent_)
+
+    def test_a_median_unlike_the_count_was_always_seen(self):
+        # the control: this case was caught before the fix too.
+        with self.assertRaises(AssertionError):
+            _floor("Now about 30 weeks: Somewhere", "9 people are waiting here.",
+                   self.floored_ent(9, 30))
+
+    def test_the_backstop_still_lets_a_real_count_through(self):
+        # Two-sided: exclusion by span must not become exclusion of nothing.
+        subject, body = render(
+            WATCH, ent(12.0, 30.0, prev_wl=19, curr_wl=9, reasons=("median", "waiting_list")),
+            "2026-06", "2026-05", SITE, page_path_for("RCF|C_410", WATCH["page_path"]))
+        self.assertIn("9 people are waiting", body)
+        self.assertIn("9 people now waiting", subject)
+
+    def test_no_control_marker_ever_reaches_a_reader(self):
+        for e in (ent(11.5, 14.0), ent(12.0, 30.0, prev_wl=4, curr_wl=3),
+                  ent(12.0, 12.2, 400, 500, reasons=("waiting_list",))):
+            subject, body = render(WATCH, e, "2026-06", "2026-05", SITE, "/x/")
+            self.assertNotIn("\x02", f"{subject}{body}")
+            self.assertNotIn("\x03", f"{subject}{body}")
+
+
+class TheFloorSentenceDescribesItsOwnMonthTests(unittest.TestCase):
+    """D-191. One sentence — "Fewer than 20 people are waiting here" — was used
+    whichever month was short. On a queue that GREW past the floor it rendered
+    directly above "52 people are waiting, 33 more than last month": a claim
+    about last month sitting on top of a claim about this month, contradicting
+    it. And it promised "We only send you the count for this queue" in messages
+    that then printed no count at all.
+    """
+
+    def render(self, e):
+        return render(WATCH, e, "2026-06", "2026-05", SITE,
+                      page_path_for("RCF|C_410", WATCH["page_path"]))
+
+    def test_a_queue_that_grew_past_the_floor_says_last_month(self):
+        # DXN|C_410 in the 2026-05 deltas: 19 -> 52, +33.
+        _, body = self.render(
+            ent(12.0, 30.0, prev_wl=19, curr_wl=52, reasons=("median", "waiting_list")))
+        self.assertIn("were waiting here last month", body)
+        self.assertNotIn("are waiting here now", body)
+        self.assertNotIn("are waiting here this month", body)
+        self.assertIn("52 people are waiting, 33 more than last month", body)
+
+    def test_a_queue_below_the_floor_now_says_now(self):
+        _, body = self.render(ent(12.0, 30.0, prev_wl=400, curr_wl=8))
+        self.assertIn("are waiting here now", body)
+        self.assertNotIn("were waiting here last month", body)
+
+    def test_a_queue_short_in_both_months_says_both(self):
+        _, body = self.render(ent(12.0, 30.0, prev_wl=4, curr_wl=3))
+        self.assertIn("this month", body)
+        self.assertIn("last month", body)
+
+    def test_it_never_promises_a_count_it_does_not_send(self):
+        for prev_wl, curr_wl, reasons in (
+            (8, 8, ("median",)), (19, 52, ("median",)), (400, 8, ("median",)),
+            (4, 3, ("median",)), (19, 52, ("median", "waiting_list")),
+        ):
+            with self.subTest(prev=prev_wl, curr=curr_wl):
+                _, body = self.render(ent(12.0, 30.0, prev_wl, curr_wl, reasons))
+                self.assertNotIn("only send you the count", body)
+                self.assertRegex(body, r"\b[\d,]+ (?:person is|people are) waiting")
+
+    def test_a_message_with_no_count_at_all_says_so(self):
+        _, body = self.render(ent(12.0, 30.0, prev_wl=400, curr_wl=None))
+        self.assertIn("do not have this month's count", body)
+
+
+class SubjectLeadsWithTheFigureTests(unittest.TestCase):
+    """D-193. The subject ran up to 132 characters with the figure LAST, so the
+    number the alert exists to deliver was the first thing a lock screen cut."""
+
+    def render(self, e):
+        return render(WATCH, e, "2026-06", "2026-05", SITE,
+                      page_path_for("RCF|C_410", WATCH["page_path"]))
+
+    def test_the_median_subject_opens_with_the_figure(self):
+        subject, _ = self.render(ent(11.5, 14.0))
+        self.assertTrue(subject.startswith("Now about 14 weeks:"), subject)
+
+    def test_the_count_subject_opens_with_the_figure(self):
+        subject, _ = self.render(ent(12.0, 12.2, 400, 500, reasons=("waiting_list",)))
+        self.assertTrue(subject.startswith("500 people now waiting:"), subject)
+
+    def test_the_figure_survives_a_lock_screen_truncation(self):
+        for e, needle in ((ent(11.5, 14.0), "14 weeks"),
+                          (ent(12.0, 12.2, 400, 500, reasons=("waiting_list",)), "500 people")):
+            subject, _ = self.render(e)
+            for width in (40, 60, 90):
+                with self.subTest(width=width, subject=subject):
+                    self.assertIn(needle, subject[:width])
+
+    def test_the_preview_line_says_something_the_subject_does_not(self):
+        subject, body = self.render(ent(11.5, 14.0))
+        preview = body.split("\n")[0]
+        self.assertNotEqual(preview[:30], subject[:30])
+        # the movement is the thing the subject cannot carry
+        self.assertIn("2 weeks longer than last month", preview)
+        self.assertNotIn("longer", subject)
+
+    def test_the_vanished_preview_is_not_the_subject_again(self):
+        subject, body = self.render(
+            {"key": "RCF|C_410", "prev": {"wl": 400, "med": 12.0}, "curr": None,
+             "vanished": True, "material": True, "reasons": ["no_longer_reported"]})
+        preview = body.split("\n")[0]
+        self.assertTrue(subject.startswith("No longer in the NHS figures:"), subject)
+        self.assertIn("did not report this treatment area", preview)
+
+
+class EveryPublishedDeltaRendersWithoutContradictingItselfTests(unittest.TestCase):
+    """The gate, not the example. Renders a message for EVERY material entity in
+    the deltas document this repo actually publishes and asserts the three
+    properties above hold on all of them — so a regression fails on real data,
+    not only on the cases someone thought to write down."""
+
+    DELTAS = os.path.join(os.path.dirname(__file__), "..", "data", "deltas", "latest.json")
+
+    def test_every_material_entity(self):
+        if not os.path.exists(self.DELTAS):
+            self.skipTest("deltas document not present in this checkout")
+        with open(self.DELTAS, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        month, prev_month = doc["month"], doc["prev_month"]
+        checked = floored_msgs = 0
+        for e in doc.get("entities", []):
+            if not e.get("material"):
+                continue
+            watch = dict(WATCH, entity_key=e["key"],
+                         label=f"Eye care at Some Hospital ({e['key']})")
+            subject, body = render(watch, e, month, prev_month, SITE, "/x/")
+            checked += 1
+            whole = f"{subject}\n{body}"
+            self.assertNotIn("\x02", whole)
+            self.assertNotIn("only send you the count", body)
+            curr = e.get("curr") or {}
+            wl_now = curr.get("wl")
+            if "are waiting here now" in body:
+                floored_msgs += 1
+                self.assertIsNotNone(wl_now)
+                self.assertLess(wl_now, 20, f"{e['key']}: says 'now' but n={wl_now}")
+            if "were waiting here last month" in body:
+                floored_msgs += 1
+                self.assertGreaterEqual(
+                    wl_now, 20, f"{e['key']}: says only last month was short but n={wl_now}")
+            if "people are waiting here this month" in body:
+                floored_msgs += 1
+                self.assertLess(wl_now, 20)
+            # every message that withholds a median must still carry a count,
+            # or say the count is missing
+            if "so we are not quoting one" in body:
+                self.assertTrue(
+                    re.search(r"\b[\d,]+ (?:person is|people are) waiting", body)
+                    or "do not have this month's count" in body,
+                    f"{e['key']}: withheld the wait and sent no count",
+                )
+        self.assertGreater(checked, 500, f"sampler read only {checked} entities")
+        self.assertGreater(floored_msgs, 20, f"only {floored_msgs} floored messages seen")
+        print(f"\n  rendered {checked} material entities from {month}; "
+              f"{floored_msgs} carried a floor sentence")
 
 
 class PagePathTests(unittest.TestCase):

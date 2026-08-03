@@ -255,14 +255,31 @@ for banned in ("sign up","subscribe to","our other","newsletter","offer","sponso
     assert banned not in subject.lower(), f"promotional wording in the subject: {banned}"
 # and the drill's synthetic change is a MATERIAL MEDIAN move on a real queue,
 # so the subject must state the wait it is telling the reader about
-assert re.search(r"typical wait now about \d+ weeks", subject), \
-    f"the subject does not carry the figure this alert exists to report: {subject!r}"
+assert re.search(r"^Now about \d+ weeks: ", subject), \
+    f"the subject does not lead with the figure this alert exists to report: {subject!r}"
 # whatever the subject says about weeks, the body must say the same number
 subj_weeks=re.findall(r"(\d+)\s*weeks", subject)
 body_weeks=re.findall(r"now about (\d+) weeks", m['text'])
 assert subj_weeks and body_weeks and subj_weeks[0]==body_weeks[0], \
     f"subject says {subj_weeks} weeks, body says {body_weeks}"
-print("OK: subject line read, non-empty, non-promotional, and agrees with the body")
+# D-193: THE FIGURE MUST SURVIVE A LOCK SCREEN. The old subject put the label
+# first and the number last — up to 132 characters — so the one fact the alert
+# exists to deliver was the first thing a phone cut. Rendered here at the widths
+# a mail client actually shows, and read.
+print(f"  subject length: {len(subject)} characters")
+for width in (40, 60, 90):
+    shown = subject[:width] + ("..." if len(subject) > width else "")
+    print(f"  truncated at {width:>2}: {shown}")
+    assert re.search(r"\d+ weeks", subject[:width]), \
+        f"the figure is gone at {width} characters: {shown!r}"
+# ...and the preview line beside it must add something, not repeat it
+preview = m['text'].split("\n")[0]
+print(f"  preview line: {preview[:110]}")
+assert preview[:30] != subject[:30], "the preview line just repeats the subject"
+assert "longer" in preview or "shorter" in preview, \
+    f"the preview line does not carry the movement the subject cannot: {preview!r}"
+print("OK: subject leads with the figure, survives 40/60/90-char truncation, "
+      "agrees with the body, and the preview line adds the movement")
 PY
 
 step "5c. re-run the SAME month — send_log must suppress a second email"
