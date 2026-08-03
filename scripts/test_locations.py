@@ -62,5 +62,35 @@ class TestBtStripInvariant(unittest.TestCase):
             self.assertFalse(pc.upper().startswith("BT"))
 
 
+class TestMissingTowns(unittest.TestCase):
+    """G-L7 (W11 / D-163): the town is an INPUT the site's label fix depends on.
+
+    Two hospitals 420 miles apart both publish as "DUCHY HOSPITAL"; the site
+    tells them apart with the ODS town. If this field ever stops arriving, the
+    label degrades to an ODS code on a page a patient chooses from, and every
+    gate downstream stays green because a code is still a distinct label. So
+    the gate lives here, where the field is produced, and refuses a
+    half-populated set rather than publishing one.
+    """
+
+    def test_all_towns_present(self):
+        self.assertEqual(
+            locations.missing_towns(
+                [{"code": "NT447", "town": "HARROGATE"},
+                 {"code": "NVC04", "town": "TRURO"}]),
+            [])
+
+    def test_absent_field_is_missing(self):
+        self.assertEqual(
+            locations.missing_towns([{"code": "NVC04"}]), ["NVC04"])
+
+    def test_empty_and_whitespace_are_missing(self):
+        self.assertEqual(
+            locations.missing_towns(
+                [{"code": "A", "town": ""}, {"code": "B", "town": "   "},
+                 {"code": "C", "town": None}, {"code": "D", "town": "TRURO"}]),
+            ["A", "B", "C"])
+
+
 if __name__ == "__main__":
     unittest.main()

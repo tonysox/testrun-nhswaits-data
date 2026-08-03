@@ -373,6 +373,22 @@ def cmd_build():
         print(f"::error::G-L5 coords outside England box: "
               f"{[(p['code'], p['lat'], p['lng']) for p in bad[:10]]}")
         sys.exit(1)
+    # G-L7 (W11 / D-163): THE TOWN IS A GATE ON THE BUILD PATH TOO.
+    # `towns` (the back-fill) has refused to publish a half-populated town set
+    # since W10, but `build` — the path the locations workflow actually runs —
+    # published the field only "when ODS carries it", with nothing asserting
+    # that it does. The site's name disambiguator consumes this field: without
+    # it, two hospitals that share a name silently degrade to an ODS code on a
+    # page a patient chooses from, and every gate downstream stays green
+    # because a code is still a distinct label. An input a fix depends on gets
+    # a gate at the point it is produced, not only where it is read.
+    missing_town = missing_towns(providers)
+    if missing_town:
+        print(f"::error::G-L7 {len(missing_town)} resolved providers have no ODS "
+              f"town: {missing_town[:20]} - refusing to publish a half-usable "
+              "disambiguator")
+        sys.exit(1)
+    print(f"G-L7: all {len(providers)} resolved providers carry an ODS town")
     # G-L4 outcode sanity.
     if not (OUTCODE_MIN <= len(out_sum) <= OUTCODE_MAX):
         print(f"::error::G-L4 outcode count {len(out_sum)} outside "
@@ -435,6 +451,16 @@ def cmd_build():
     print("published data/locations/{providers,outcodes,nearest}.json")
 
 
+
+def missing_towns(providers):
+    """G-L7: the provider codes with no usable ODS town (W11 / D-163).
+
+    One function, used by BOTH the full `build` and the `towns` back-fill, so
+    the two paths cannot disagree about what "published" means.
+    """
+    return [p["code"] for p in providers if not str(p.get("town") or "").strip()]
+
+
 # ---------------------------------------------------------------- towns
 def cmd_towns():
     """Back-fill `town`/`county` onto an ALREADY PUBLISHED providers.json.
@@ -456,7 +482,6 @@ def cmd_towns():
         doc = json.load(f)
     providers = doc["providers"]
     print(f"back-filling town/county for {len(providers)} published providers")
-    missing = []
     for i, p in enumerate(providers):
         status, body = http_get(f"{ORD_BASE}/{p['code']}", timeout=30)
         town = county = ""
@@ -472,7 +497,6 @@ def cmd_towns():
             p["town"] = town
         else:
             p.pop("town", None)
-            missing.append(p["code"])
         if county:
             p["county"] = county
         else:
@@ -480,6 +504,7 @@ def cmd_towns():
         if (i + 1) % 100 == 0:
             print(f"  {i + 1}/{len(providers)} looked up")
         time.sleep(0.15)  # politeness: unauthenticated public API
+    missing = missing_towns(providers)
     if missing:
         print(f"::error::G-L7 {len(missing)} published providers have no ODS "
               f"town: {missing[:20]} - refusing to publish a half-usable "
