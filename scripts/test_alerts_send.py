@@ -9,7 +9,7 @@ quoted from the versioned module rather than retyped.
 import re
 import unittest
 
-from alerts_send import render, page_path_for
+from alerts_send import render, page_path_for, _floor
 from alerts_thresholds import MEDIAN_DELTA_WEEKS, THRESHOLDS_VERSION
 
 WATCH = {
@@ -33,7 +33,7 @@ def ent(prev_med, curr_med, prev_wl=400, curr_wl=400, reasons=("median",)):
         "key": "RCF|C_410",
         "prev": {"wl": prev_wl, "med": prev_med},
         "curr": {"wl": curr_wl, "med": curr_med},
-        "delta_wl": curr_wl - prev_wl,
+        "delta_wl": None if curr_wl is None or prev_wl is None else curr_wl - prev_wl,
         "delta_med": round(curr_med - prev_med, 1),
         "material": True,
         "reasons": list(reasons),
@@ -138,6 +138,56 @@ class TemplateTests(unittest.TestCase):
     def test_estimate_is_flagged(self):
         _, body = self.render(ent(11.5, 14.0))
         self.assertIn("close estimate", body)
+
+
+class FloorAppliesToTheWholeMessageTests(unittest.TestCase):
+    """D-174. Every check in this file read the BODY.
+
+    The subject line is the half of an email a phone shows on the lock screen
+    without the reader opening anything, and it is built from the same median
+    ("… — typical wait now about 14 weeks"). A floored body plus an unfloored
+    subject publishes the withheld figure to more people than the body ever
+    reaches. The floor is now asserted over subject and body as ONE string.
+    """
+
+    def render(self, e):
+        return render(WATCH, e, "2026-06", "2026-05", SITE,
+                      page_path_for("RCF|C_410", WATCH["page_path"]))
+
+    def test_a_missing_count_is_treated_as_below_the_floor(self):
+        # The fail-open: `small_now = wl_now is not None and wl_now < 20` made a
+        # MISSING count read as "not small", so the month where the denominator
+        # did not arrive — the month you would least trust a median from — got
+        # the median quoted, in the subject and in the body.
+        subject, body = self.render(ent(12.0, 30.0, prev_wl=400, curr_wl=None))
+        self.assertIn("too few for a reliable typical wait", body)
+        self.assertNotIn("30 weeks", f"{subject}\n{body}")
+
+    def test_a_missing_previous_count_is_treated_as_below_the_floor(self):
+        subject, body = self.render(ent(12.0, 30.0, prev_wl=None, curr_wl=400))
+        self.assertIn("too few for a reliable typical wait", body)
+        self.assertNotIn("30 weeks", f"{subject}\n{body}")
+
+    def test_the_subject_of_a_floored_message_carries_no_wait(self):
+        for prev_wl, curr_wl in ((400, 3), (4, 400), (None, 400), (400, None), (2, 2)):
+            subject, body = self.render(ent(12.0, 30.0, prev_wl=prev_wl, curr_wl=curr_wl))
+            self.assertIsNone(
+                re.search(r"\d[\d,.]*\s*(?:wk|wks|week|weeks)\b", subject),
+                f"subject quotes a wait for a floored queue ({prev_wl}->{curr_wl}): {subject}",
+            )
+
+    def test_the_floor_is_asserted_over_subject_and_body_together(self):
+        # Directly: a subject that breaks the floor must stop the send job even
+        # when the body is spotless.
+        floored = {"key": "X", "prev": {"wl": 4, "med": 12.0},
+                   "curr": {"wl": 3, "med": 30.0}, "reasons": ["median"]}
+        with self.assertRaises(AssertionError):
+            _floor("Somewhere — typical wait now about 30 weeks", "3 people are waiting.", floored)
+
+    def test_the_floor_does_not_fire_on_a_real_queue(self):
+        # Two-sided: the guard must not stop an entitled message.
+        subject, body = self.render(ent(12.0, 14.0, prev_wl=400, curr_wl=420))
+        self.assertIn("14 weeks", f"{subject}\n{body}")
 
 
 class PagePathTests(unittest.TestCase):

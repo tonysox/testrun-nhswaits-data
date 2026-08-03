@@ -21,6 +21,7 @@ Three rules this file exists to keep:
 """
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -89,8 +90,13 @@ def render(watch, ent, month, prev_month, site_origin, page_path):
         # place the reader cannot click through to the caveat before believing
         # it — so the same floor applies, in the same words. The raw count is
         # still sent, because a count is a fact the data can carry.
-        small_now = wl_now is not None and wl_now < SMALL_N_FLOOR
-        small_prev = wl_prev is not None and wl_prev < SMALL_N_FLOOR
+        # D-174: FAIL CLOSED WHEN THE DENOMINATOR IS UNKNOWN. This read
+        # `wl_now is not None and wl_now < SMALL_N_FLOOR`, so a month where the
+        # count did not come through — exactly the month you would least trust
+        # a median from — evaluated to "not small" and the email quoted the
+        # typical wait. A missing denominator is not a large denominator.
+        small_now = wl_now is None or wl_now < SMALL_N_FLOOR
+        small_prev = wl_prev is None or wl_prev < SMALL_N_FLOOR
         if "median" in reasons and (small_now or small_prev):
             subject = f"{label} — the number of people waiting has changed"
             headline_bits.append(
@@ -142,7 +148,60 @@ def render(watch, ent, month, prev_month, site_origin, page_path):
         "Turnbeck — NHS waiting times & your right to choose faster care.",
         "England only. This is general information, not medical advice.",
     ]
-    return subject, "\n".join(lines)
+    body = "\n".join(lines)
+    return _floor(subject, body, ent)
+
+
+# The withheld figure, in any of the shapes this template could print it.
+_WAIT_CLAIM = re.compile(
+    r"(?<![\d.])\d[\d,.]*\s*(?:wk|wks|week|weeks)\b|(?<![\d.])\d[\d,.]*\s*%"
+)
+# The four reference numbers the site (and this email) may always quote: the
+# floor itself, the alert materiality rule, and the national standard.
+_SANCTIONED = re.compile(
+    r"Fewer than 20 people|by 1 week or more|at least 25 people|10%|under 18 weeks",
+    re.I,
+)
+
+
+def _floor(subject, body, ent):
+    """D-174: THE FLOOR APPLIES TO THE WHOLE MESSAGE, AS ONE STRING.
+
+    Every check — here and in test_alerts_send.py — read the BODY. The subject
+    line is the half of an email that a phone shows on the lock screen without
+    the reader opening anything, and it is built from the same median:
+    ``"… — typical wait now about 14 weeks"``. A floored message whose body
+    correctly refuses to quote a median could still put that median on the lock
+    screen, and nothing in either repo would have noticed.
+
+    So the assertion is made once, over ``subject + "\\n" + body``, and it is an
+    assertion rather than a log line: a message that breaks the floor is not
+    sent in a degraded form, it stops the send job.
+    """
+    curr, prev = ent.get("curr") or {}, ent.get("prev") or {}
+    wl_now, wl_prev = curr.get("wl"), prev.get("wl")
+    floored = (
+        ent.get("vanished")
+        or wl_now is None
+        or wl_now < SMALL_N_FLOOR
+        or wl_prev is None
+        or wl_prev < SMALL_N_FLOOR
+    )
+    if floored:
+        whole = f"{subject}\n{body}"
+        # The count is a fact the data can carry; strike it, and the sanctioned
+        # reference numbers, before asking what is left.
+        probe = _SANCTIONED.sub(" ", whole)
+        for n in (wl_now, wl_prev):
+            if n is not None:
+                probe = probe.replace(f"{n:,}", " ").replace(str(n), " ")
+        leaked = _WAIT_CLAIM.search(probe)
+        assert not leaked, (
+            "the alert message quotes a wait for a queue below the "
+            f"{SMALL_N_FLOOR}-person floor: {leaked.group(0)!r} in "
+            f"{whole[max(0, leaked.start() - 40):leaked.end() + 20]!r}"
+        )
+    return subject, body
 
 
 def page_path_for(entity_key, page_hint):

@@ -239,6 +239,32 @@ for banned in ("sign up","subscribe to","our other","newsletter","offer","sponso
 print("OK: one-click unsubscribe headers present; no promotional content (PECR mixed-content rule)")
 PY
 
+step "5b-ii. THE SUBJECT LINE — the half of the email a lock screen shows"
+# D-174. This drill read m['text'] — the BODY — and nothing ever looked at the
+# subject, which is built from the same median and is what a phone displays
+# before anybody opens anything. The subject is now read, printed, and held to
+# the same rules as the body.
+python3 - "$EVIDENCE/09-messages-after-alert.json" <<'PY'
+import json,re,sys
+m=json.load(open(sys.argv[1]))[1]
+subject=m['subject']
+print(f"Subject: {subject}")
+assert subject.strip(), "the alert was sent with an empty subject line"
+# a subject is a claim surface: same promotional ban as the body
+for banned in ("sign up","subscribe to","our other","newsletter","offer","sponsor","discount"):
+    assert banned not in subject.lower(), f"promotional wording in the subject: {banned}"
+# and the drill's synthetic change is a MATERIAL MEDIAN move on a real queue,
+# so the subject must state the wait it is telling the reader about
+assert re.search(r"typical wait now about \d+ weeks", subject), \
+    f"the subject does not carry the figure this alert exists to report: {subject!r}"
+# whatever the subject says about weeks, the body must say the same number
+subj_weeks=re.findall(r"(\d+)\s*weeks", subject)
+body_weeks=re.findall(r"now about (\d+) weeks", m['text'])
+assert subj_weeks and body_weeks and subj_weeks[0]==body_weeks[0], \
+    f"subject says {subj_weeks} weeks, body says {body_weeks}"
+print("OK: subject line read, non-empty, non-promotional, and agrees with the body")
+PY
+
 step "5c. re-run the SAME month — send_log must suppress a second email"
 PYTHONPATH=scripts python3 scripts/alerts_send.py \
   --deltas "$EVIDENCE/drill-deltas.json" --api "$API" --admin-secret "$ADMIN_SECRET" \
