@@ -1,0 +1,29 @@
+name: unit-tests
+
+# W11 / D-163. The pipeline's unit tests existed but only ran INSIDE the job
+# that used them: `test_locations*.py` ran in the manual `locations` workflow,
+# so a push that broke G-L7 — the gate that refuses to publish a half-populated
+# town set, which the site's name disambiguator depends on — would not be
+# caught until somebody chose to refresh the locations layer, which is a
+# months-apart, manually-dispatched job.
+#
+# That is the same shape as testrun D-160 in the web repo: a proof that runs
+# when someone remembers to run it is not a gate. These tests are pure and
+# offline (no ODS, no ONSPD, no network, no accounts, no spend), so they belong
+# on every push.
+
+on:
+  push:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/unit-tests.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every unit test in scripts/ (locations, alerts, thresholds, pipeline)
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
