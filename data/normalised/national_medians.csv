@@ -599,3 +599,27 @@ row_key,month,specialty_code,specialty_name,providers,waiting_list,median_wait_w
 2026-05|X04,2026-05,X04,Other - Paediatric Services,122,324322,11.8,68.3
 2026-05|X05,2026-05,X05,Other - Surgical Services,155,469136,11.9,66.1
 2026-05|X06,2026-05,X06,Other - Other Services,190,159633,8.9,76.9
+2026-06|C_100,2026-06,C_100,General Surgery Service,280,382851,13.1,63.0
+2026-06|C_101,2026-06,C_101,Urology Service,219,373998,12.3,65.0
+2026-06|C_110,2026-06,C_110,Trauma and Orthopaedic Service,311,837484,13.8,60.6
+2026-06|C_120,2026-06,C_120,Ear Nose and Throat Service,168,595473,14.7,59.0
+2026-06|C_130,2026-06,C_130,Ophthalmology Service,350,622977,9.9,73.8
+2026-06|C_140,2026-06,C_140,Oral Surgery Service,117,320552,16.0,55.0
+2026-06|C_150,2026-06,C_150,Neurosurgical Service,59,56667,13.4,62.8
+2026-06|C_160,2026-06,C_160,Plastic Surgery Service,112,105372,14.0,59.3
+2026-06|C_170,2026-06,C_170,Cardiothoracic Surgery Service,44,9161,9.9,72.8
+2026-06|C_300,2026-06,C_300,General Internal Medicine Service,107,36576,10.5,71.4
+2026-06|C_301,2026-06,C_301,Gastroenterology Service,212,362052,11.0,69.3
+2026-06|C_320,2026-06,C_320,Cardiology Service,136,373459,11.7,68.2
+2026-06|C_330,2026-06,C_330,Dermatology Service,122,399463,10.2,69.0
+2026-06|C_340,2026-06,C_340,Respiratory Medicine Service,125,189478,9.8,74.8
+2026-06|C_400,2026-06,C_400,Neurology Service,107,209198,13.7,61.7
+2026-06|C_410,2026-06,C_410,Rheumatology Service,131,118749,10.4,70.8
+2026-06|C_430,2026-06,C_430,Elderly Medicine Service,119,26639,7.3,83.1
+2026-06|C_502,2026-06,C_502,Gynaecology Service,201,577108,13.9,61.0
+2026-06|C_999,2026-06,C_999,Total,537,7178718,11.9,65.8
+2026-06|X02,2026-06,X02,Other - Medical Services,169,618643,10.4,71.0
+2026-06|X03,2026-06,X03,Other - Mental Health Services,31,3583,8.7,82.1
+2026-06|X04,2026-06,X04,Other - Paediatric Services,121,327450,11.3,68.4
+2026-06|X05,2026-06,X05,Other - Surgical Services,156,471976,11.2,66.4
+2026-06|X06,2026-06,X06,Other - Other Services,189,159809,8.3,76.7

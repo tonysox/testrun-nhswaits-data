@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-31T19:03:11.052459+00:00",
+  "generated_at": "2026-08-13T08:48:02.224522+00:00",
   "months_present": [
     "2024-05",
     "2024-06",
@@ -25,17 +25,18 @@
     "2026-02",
     "2026-03",
     "2026-04",
-    "2026-05"
+    "2026-05",
+    "2026-06"
   ],
-  "latest_month": "2026-05",
-  "trusts": 562,
+  "latest_month": "2026-06",
+  "trusts": 566,
   "specialties": 24,
-  "rows": 102135,
-  "waiting_list_total_latest_month": 7184233,
-  "last_ingest_month": "2026-04",
-  "raw_release_tag": "raw-backfill-2026-04",
-  "source_url": "https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/06/Full-CSV-data-file-Apr26-ZIP-3M-X7gGnn.zip",
-  "raw_sha256": "d21b6444bd9f6a2b655619f532af9c528c3927226019127b3c467c2cf7717410",
+  "rows": 106258,
+  "waiting_list_total_latest_month": 7178718,
+  "last_ingest_month": "2026-06",
+  "raw_release_tag": "raw-2026-08-13",
+  "source_url": "https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/08/Full-CSV-data-file-Jun26-ZIP-3M-6jPlxd.zip",
+  "raw_sha256": "9ef9e86266655224f390e2e052de0f6a81da3e133f11c040a99f331339fe14e7",
   "month_sources": {
     "2024-05": {
       "source_url": "https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2025/02/Full-CSV-data-file-May24-ZIP-4M-revised.zip",
@@ -186,9 +187,15 @@
       "raw_sha256": "b99c134c078f3d0e88238b32778ee0c24f96887387e30321ccf5ea78c3fa46eb",
       "raw_release_tag": "raw-2026-07-30",
       "derived_at": "2026-07-31T19:00:54.085992+00:00"
+    },
+    "2026-06": {
+      "source_url": "https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/08/Full-CSV-data-file-Jun26-ZIP-3M-6jPlxd.zip",
+      "raw_sha256": "9ef9e86266655224f390e2e052de0f6a81da3e133f11c040a99f331339fe14e7",
+      "raw_release_tag": "raw-2026-08-13",
+      "derived_at": "2026-08-13T08:48:02.224494+00:00"
     }
   },
   "national_medians_file": "national_medians.csv",
   "national_medians_method": "patient-weighted: the weekly wait bands are summed across every provider reporting the specialty in the month, then the median is interpolated from that single pooled distribution \u2014 the same estimator used for each provider row, applied to England as one queue. It is NOT the median (or mean) of provider medians.",
-  "national_medians_rows": 600
+  "national_medians_rows": 624
 }

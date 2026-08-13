@@ -23,3 +23,4 @@ d8645471fd51e2d869db66bfd46d4105f7fea371bb59e3afec9e02ea9181df1e  raw-backfill-2
 fe6e012839a4e5676dc55c854e50bb6ba4c31de166aeee1882a1704c53304ec8  raw-backfill-2026-02  https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/04/Full-CSV-data-file-Feb26-ZIP-4M-9j03fJT.zip
 87f8ead7be83f5c63fafac1cd441909b7306b7625aeda2dcf019ec949118fa80  raw-backfill-2026-03  https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/07/Full-CSV-data-file-Mar26-ZIP-3M-revised.zip
 d21b6444bd9f6a2b655619f532af9c528c3927226019127b3c467c2cf7717410  raw-backfill-2026-04  https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/06/Full-CSV-data-file-Apr26-ZIP-3M-X7gGnn.zip
+9ef9e86266655224f390e2e052de0f6a81da3e133f11c040a99f331339fe14e7  raw-2026-08-13  https://www.england.nhs.uk/statistics/wp-content/uploads/sites/2/2026/08/Full-CSV-data-file-Jun26-ZIP-3M-6jPlxd.zip
