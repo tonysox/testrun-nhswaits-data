@@ -623,3 +623,27 @@ row_key,month,specialty_code,specialty_name,providers,waiting_list,median_wait_w
 2026-06|X04,2026-06,X04,Other - Paediatric Services,121,327450,11.3,68.4
 2026-06|X05,2026-06,X05,Other - Surgical Services,156,471976,11.2,66.4
 2026-06|X06,2026-06,X06,Other - Other Services,189,159809,8.3,76.7
+2026-07|C_100,2026-07,C_100,General Surgery Service,274,383577,12.6,63.0
+2026-07|C_101,2026-07,C_101,Urology Service,217,368963,12.2,64.7
+2026-07|C_110,2026-07,C_110,Trauma and Orthopaedic Service,307,848807,13.6,60.7
+2026-07|C_120,2026-07,C_120,Ear Nose and Throat Service,167,594940,14.8,57.6
+2026-07|C_130,2026-07,C_130,Ophthalmology Service,350,622947,10.2,72.9
+2026-07|C_140,2026-07,C_140,Oral Surgery Service,117,319386,15.9,54.2
+2026-07|C_150,2026-07,C_150,Neurosurgical Service,57,54161,13.3,62.7
+2026-07|C_160,2026-07,C_160,Plastic Surgery Service,110,108107,13.7,59.5
+2026-07|C_170,2026-07,C_170,Cardiothoracic Surgery Service,43,8807,9.6,73.3
+2026-07|C_300,2026-07,C_300,General Internal Medicine Service,103,35308,10.2,71.6
+2026-07|C_301,2026-07,C_301,Gastroenterology Service,208,362206,10.9,69.4
+2026-07|C_320,2026-07,C_320,Cardiology Service,134,366165,11.7,67.8
+2026-07|C_330,2026-07,C_330,Dermatology Service,119,414613,10.2,69.2
+2026-07|C_340,2026-07,C_340,Respiratory Medicine Service,124,184610,10.0,74.7
+2026-07|C_400,2026-07,C_400,Neurology Service,106,206652,13.4,61.6
+2026-07|C_410,2026-07,C_410,Rheumatology Service,128,117922,10.5,70.3
+2026-07|C_430,2026-07,C_430,Elderly Medicine Service,116,26838,7.3,83.8
+2026-07|C_502,2026-07,C_502,Gynaecology Service,197,586514,13.8,60.0
+2026-07|C_999,2026-07,C_999,Total,533,7162692,12.0,65.3
+2026-07|X02,2026-07,X02,Other - Medical Services,162,618137,10.5,70.3
+2026-07|X03,2026-07,X03,Other - Mental Health Services,30,3456,8.2,80.5
+2026-07|X04,2026-07,X04,Other - Paediatric Services,118,324770,11.7,67.1
+2026-07|X05,2026-07,X05,Other - Surgical Services,155,470577,11.3,66.5
+2026-07|X06,2026-07,X06,Other - Other Services,182,135229,8.8,75.0
